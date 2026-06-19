@@ -374,7 +374,7 @@ export default function ProveedorScreen() {
                     styles.segmentText,
                     paymentMethod === "app" && styles.segmentTextActive,
                   ]}>
-                  App cliente
+                  Notificacion
                 </Text>
               </Pressable>
               <Pressable
@@ -425,7 +425,7 @@ export default function ProveedorScreen() {
                 <>
                   <IconSymbol color="#fff8e8" name="checkmark.seal.fill" size={20} />
                   <Text style={styles.primaryButtonText}>
-                    {paymentMethod === "app" ? "Enviar solicitud" : "Cobrar ahora"}
+                    {paymentMethod === "app" ? "Enviar notificacion" : "Cobrar ahora"}
                   </Text>
                 </>
               )}

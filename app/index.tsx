@@ -15,6 +15,7 @@ import { router } from 'expo-router';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { clearSession, getHomePathForProfile, getStoredSession, login } from '@/services/auth';
+import { registerDeviceForPushNotifications } from '@/services/notifications';
 
 export default function LoginScreen() {
   const [usuario, setUsuario] = useState('');
@@ -33,6 +34,7 @@ export default function LoginScreen() {
           const homePath = getHomePathForProfile(session.user.id_perfil);
 
           if (homePath) {
+            registerDeviceForPushNotifications(session.token).catch(() => {});
             router.replace(homePath);
             return;
           }
@@ -72,6 +74,7 @@ export default function LoginScreen() {
         return;
       }
 
+      registerDeviceForPushNotifications(session.token).catch(() => {});
       router.replace(homePath);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');

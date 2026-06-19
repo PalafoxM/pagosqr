@@ -21,6 +21,12 @@ import {
   getFallbackClienteProfile,
 } from "@/services/client-data";
 import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
+import {
+  PaymentRequestNotification,
+  approvePaymentRequest,
+  observePaymentRequests,
+  rejectPaymentRequest,
+} from "@/services/notifications";
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
 
@@ -58,6 +64,11 @@ export default function ClienteScreen() {
   const [establecimientos, setEstablecimientos] = useState<EstablecimientoFic[]>([]);
   const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
   const [establecimientosError, setEstablecimientosError] = useState("");
+  const [paymentRequest, setPaymentRequest] = useState<PaymentRequestNotification | null>(null);
+  const [paymentActionLoading, setPaymentActionLoading] = useState<"approve" | "reject" | null>(
+    null,
+  );
+  const [paymentActionMessage, setPaymentActionMessage] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -156,6 +167,41 @@ export default function ClienteScreen() {
     router.replace("/");
   }, []);
 
+  useEffect(() => {
+    return observePaymentRequests((nextPaymentRequest) => {
+      setPaymentRequest(nextPaymentRequest);
+      setPaymentActionMessage("");
+      setActiveTab("datos");
+    });
+  }, []);
+
+  const handlePaymentAction = async (action: "approve" | "reject") => {
+    if (!session || !paymentRequest?.transactionId) {
+      return;
+    }
+
+    setPaymentActionLoading(action);
+    setPaymentActionMessage("");
+
+    try {
+      if (action === "approve") {
+        await approvePaymentRequest(session.token, paymentRequest.transactionId);
+        setPaymentActionMessage("Pago aprobado correctamente.");
+      } else {
+        await rejectPaymentRequest(session.token, paymentRequest.transactionId);
+        setPaymentActionMessage("Pago rechazado correctamente.");
+      }
+
+      setPaymentRequest(null);
+    } catch (paymentError) {
+      setPaymentActionMessage(
+        paymentError instanceof Error ? paymentError.message : "No se pudo responder el pago.",
+      );
+    } finally {
+      setPaymentActionLoading(null);
+    }
+  };
+
   const qrPayload = useMemo(() => {
     if (!session) {
       return "";
@@ -223,6 +269,52 @@ export default function ClienteScreen() {
               );
             })}
           </View>
+
+          {paymentRequest ? (
+            <View style={styles.paymentPanel}>
+              <Text style={styles.paymentKicker}>Solicitud de pago</Text>
+              <Text style={styles.paymentTitle}>
+                {paymentRequest.vendorName || "Proveedor FIC"}
+              </Text>
+              {paymentRequest.description ? (
+                <Text style={styles.paymentText}>{paymentRequest.description}</Text>
+              ) : null}
+              <View style={styles.paymentTotalRow}>
+                <Text style={styles.paymentText}>Total</Text>
+                <Text style={styles.paymentTotal}>
+                  ${Number(paymentRequest.total || 0).toFixed(2)}
+                </Text>
+              </View>
+              <View style={styles.paymentActions}>
+                <Pressable
+                  disabled={Boolean(paymentActionLoading)}
+                  onPress={() => handlePaymentAction("reject")}
+                  style={({ pressed }) => [
+                    styles.rejectButton,
+                    (pressed || paymentActionLoading === "reject") && styles.pressed,
+                  ]}>
+                  <Text style={styles.rejectButtonText}>Rechazar</Text>
+                </Pressable>
+                <Pressable
+                  disabled={Boolean(paymentActionLoading)}
+                  onPress={() => handlePaymentAction("approve")}
+                  style={({ pressed }) => [
+                    styles.approveButton,
+                    (pressed || paymentActionLoading === "approve") && styles.pressed,
+                  ]}>
+                  {paymentActionLoading === "approve" ? (
+                    <ActivityIndicator color="#fff8e8" />
+                  ) : (
+                    <Text style={styles.approveButtonText}>Aprobar</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+
+          {paymentActionMessage ? (
+            <Text style={styles.paymentMessage}>{paymentActionMessage}</Text>
+          ) : null}
 
           {activeTab === "datos" ? (
             <View style={styles.panel}>
@@ -445,6 +537,79 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 14,
     padding: 18,
+  },
+  paymentPanel: {
+    backgroundColor: "#24160f",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 10,
+    padding: 18,
+  },
+  paymentKicker: {
+    color: "#d5a84f",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  paymentTitle: {
+    color: "#fff8e8",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  paymentText: {
+    color: "#e7d7b5",
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  paymentTotalRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  paymentTotal: {
+    color: "#fff8e8",
+    fontSize: 28,
+    fontWeight: "900",
+  },
+  paymentActions: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  rejectButton: {
+    alignItems: "center",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  rejectButtonText: {
+    color: "#fff8e8",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  approveButton: {
+    alignItems: "center",
+    backgroundColor: "#8f1d2c",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  approveButtonText: {
+    color: "#fff8e8",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  paymentMessage: {
+    color: "#8f1d2c",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 20,
   },
   qrBox: {
     alignItems: "center",
