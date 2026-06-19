@@ -1,5 +1,4 @@
 import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -21,6 +20,18 @@ type ApiResponse<T> = {
   data?: T;
 };
 
+type NotificationsModule = typeof import("expo-notifications");
+type NotificationPayload = {
+  request: {
+    content: {
+      data?: unknown;
+    };
+  };
+};
+
+const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
+let notificationHandlerConfigured = false;
+
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {
     throw new Error("No esta configurado EXPO_PUBLIC_API_BASE_URL.");
@@ -29,14 +40,27 @@ const getApiBaseUrl = () => {
   return API_BASE_URL.replace(/\/$/, "");
 };
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
+async function loadNotifications(): Promise<NotificationsModule | null> {
+  if (isExpoGoAndroid) {
+    return null;
+  }
+
+  const Notifications = await import("expo-notifications");
+
+  if (!notificationHandlerConfigured) {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+        shouldShowBanner: true,
+        shouldShowList: true,
+      }),
+    });
+    notificationHandlerConfigured = true;
+  }
+
+  return Notifications;
+}
 
 export const isPaymentRequestNotification = (
   data: unknown,
@@ -76,6 +100,12 @@ async function postAuthenticated<T>(
 }
 
 export async function registerDeviceForPushNotifications(token: string) {
+  const Notifications = await loadNotifications();
+
+  if (!Notifications) {
+    return null;
+  }
+
   if (Platform.OS === "android") {
     await Notifications.setNotificationChannelAsync("default", {
       name: "Pagos FIC",
@@ -115,7 +145,10 @@ export async function registerDeviceForPushNotifications(token: string) {
 export function observePaymentRequests(
   onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,
 ) {
-  const showPaymentRequest = (notification: Notifications.Notification) => {
+  let cleanup = () => {};
+  let disposed = false;
+
+  const showPaymentRequest = (notification: NotificationPayload) => {
     const data = notification.request.content.data;
 
     if (isPaymentRequestNotification(data)) {
@@ -123,24 +156,47 @@ export function observePaymentRequests(
     }
   };
 
-  Notifications.getLastNotificationResponseAsync().then((response) => {
-    if (response?.notification) {
-      showPaymentRequest(response.notification);
-    }
-  });
+  loadNotifications()
+    .then((Notifications) => {
+      if (!Notifications || disposed) {
+        return;
+      }
 
-  const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
-    showPaymentRequest(notification);
-  });
-  const responseSubscription = Notifications.addNotificationResponseReceivedListener(
-    (response) => {
-      showPaymentRequest(response.notification);
-    },
-  );
+      Notifications.getLastNotificationResponseAsync().then((response) => {
+        if (response?.notification) {
+          showPaymentRequest(response.notification);
+        }
+      });
+
+      const receivedSubscription = Notifications.addNotificationReceivedListener(
+        (notification) => {
+          showPaymentRequest(notification);
+        },
+      );
+      const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+        (response) => {
+          showPaymentRequest(response.notification);
+        },
+      );
+
+      cleanup = () => {
+        receivedSubscription.remove();
+        responseSubscription.remove();
+      };
+
+      if (disposed) {
+        cleanup();
+      }
+    })
+    .catch(() => {
+      if (!disposed) {
+        cleanup = () => {};
+      }
+    });
 
   return () => {
-    receivedSubscription.remove();
-    responseSubscription.remove();
+    disposed = true;
+    cleanup();
   };
 }
 

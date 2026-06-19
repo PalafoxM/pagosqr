@@ -305,22 +305,24 @@ export default function ProveedorScreen() {
 
             {scannerOpen ? (
               <View style={styles.scannerPanel}>
-                <CameraView
-                  active={scannerOpen}
-                  barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                  facing="back"
-                  onBarcodeScanned={(result) => {
-                    if (result.data) {
-                      setQrCode(result.data);
-                      setScannerOpen(false);
-                    }
-                  }}
-                  style={styles.camera}>
-                  <View style={styles.scannerOverlay}>
+                <View style={styles.cameraShell}>
+                  <CameraView
+                    active={scannerOpen}
+                    barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+                    facing="back"
+                    onBarcodeScanned={(result) => {
+                      if (result.data) {
+                        setQrCode(result.data);
+                        setScannerOpen(false);
+                      }
+                    }}
+                    style={styles.camera}
+                  />
+                  <View pointerEvents="none" style={styles.scannerOverlay}>
                     <View style={styles.scannerFrame} />
                     <Text style={styles.scannerText}>Alinea el QR del cliente</Text>
                   </View>
-                </CameraView>
+                </View>
                 <Pressable
                   onPress={() => setScannerOpen(false)}
                   style={({ pressed }) => [styles.closeScannerButton, pressed && styles.pressed]}>
@@ -579,14 +581,18 @@ const styles = StyleSheet.create({
     padding: 10,
   },
   camera: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  cameraShell: {
     borderRadius: 8,
     height: 320,
     overflow: "hidden",
+    position: "relative",
   },
   scannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
     alignItems: "center",
     backgroundColor: "rgba(0, 0, 0, 0.18)",
-    flex: 1,
     justifyContent: "center",
     gap: 18,
   },
