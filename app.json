@@ -38,6 +38,14 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-secure-store",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir que Pagos FIC use la camara para escanear codigos QR.",
+          "recordAudioAndroid": false
+        }
       ]
     ],
     "experiments": {
