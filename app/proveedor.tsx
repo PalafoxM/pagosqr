@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import { router, Stack } from "expo-router";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -9,16 +10,15 @@ import {
   TextInput,
   View,
 } from "react-native";
-import { router, Stack } from "expo-router";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
 import {
   ChargeResult,
-  PaymentMethod,
-  ProviderEstablecimiento,
   createProviderCharge,
   getProviderEstablecimientos,
+  PaymentMethod,
+  ProviderEstablecimiento,
 } from "@/services/provider-data";
 
 const moneyFromText = (value: string) => {
@@ -285,7 +285,7 @@ export default function ProveedorScreen() {
                   placeholder="Escanea o pega el codigo QR"
                   placeholderTextColor="#9b876a"
                   style={[styles.input, styles.qrInput]}
-                  value={qrCode}
+                  value={parsedClient?.nombre_completo ?? qrCode}
                 />
                 <Pressable
                   accessibilityLabel="Escanear codigo QR"
