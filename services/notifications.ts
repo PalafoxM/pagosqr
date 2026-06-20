@@ -62,9 +62,11 @@ async function postAuthenticated<T>(
   return result.data as T;
 }
 
-export async function registerDeviceForPushNotifications(_token: string) {
+export async function registerPushToken(_token: string) {
   return null;
 }
+
+export const registerDeviceForPushNotifications = registerPushToken;
 
 export function observePaymentRequests(
   _onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,

@@ -297,8 +297,7 @@ export default function ProveedorScreen() {
               </View>
               {parsedClient ? (
                 <Text style={styles.clientPreview}>
-                  Cliente #{parsedClient.id_usuario}
-                  {parsedClient.nombre_completo ? ` - ${parsedClient.nombre_completo}` : ""}
+                  {parsedClient.nombre_completo || "Cliente"}
                 </Text>
               ) : null}
             </View>

@@ -99,7 +99,21 @@ async function postAuthenticated<T>(
   return result.data as T;
 }
 
-export async function registerDeviceForPushNotifications(token: string) {
+async function savePushToken(token: string, expoPushToken: string) {
+  const payload = {
+    push_token: expoPushToken,
+    platform: Platform.OS,
+    app_version: Constants.expoConfig?.version || "",
+  };
+
+  try {
+    return await postAuthenticated("/auth/register-token", token, payload);
+  } catch {
+    return postAuthenticated("/notifications/register-token", token, payload);
+  }
+}
+
+export async function registerPushToken(token: string) {
   const Notifications = await loadNotifications();
 
   if (!Notifications) {
@@ -133,14 +147,12 @@ export async function registerDeviceForPushNotifications(token: string) {
     ? (await Notifications.getExpoPushTokenAsync({ projectId })).data
     : (await Notifications.getExpoPushTokenAsync()).data;
 
-  await postAuthenticated("/auth/register-token", token, {
-    push_token: expoPushToken,
-    platform: Platform.OS,
-    app_version: Constants.expoConfig?.version || "",
-  });
+  await savePushToken(token, expoPushToken);
 
   return expoPushToken;
 }
+
+export const registerDeviceForPushNotifications = registerPushToken;
 
 export function observePaymentRequests(
   onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,
