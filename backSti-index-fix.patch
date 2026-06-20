@@ -1,0 +1,137 @@
+*** Begin Patch
+*** Update File: C:\wamp64\www\backSti\index.js
+@@
+ const getValidQrClient = async (codigoQr) => {
+   const qrCode = String(codigoQr || "").trim();
+   if (!qrCode) return null;
++  let qrUserId = Number(qrCode);
++
++  try {
++    const parsedQr = JSON.parse(qrCode);
++    qrUserId = Number(parsedQr?.id_usuario || parsedQr?.id || qrUserId || 0);
++  } catch (_) {}
+ 
+   const rows = await query(
+     `SELECT *
+-FROM vw_usuario
+-WHERE id_usuario = ?
+-  AND visible = 1
+-  AND activo_qr = 1
+-  AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
+-  AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
+-LIMIT 1`,
+-    [qrCode.id_usuario],
++       FROM vw_usuario
++       WHERE (qr = ? OR (? > 0 AND id_usuario = ?))
++         AND visible = 1
++         AND activo_qr = 1
++         AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
++         AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
++       LIMIT 1`,
++    [qrCode, qrUserId, qrUserId],
+   );
+ 
+   return rows[0] || null;
+ };
+@@
+   const rows = await query(
+     `SELECT *
+-FROM vw_usuario
+-WHERE qr = ?
+-  AND visible = 1
+-  AND activo_qr = 1
+-  AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
+-  AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
+-LIMIT 1`,
++       FROM vw_usuario
++       WHERE id_usuario = ?
++         AND visible = 1
++         AND activo_qr = 1
++         AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
++         AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
++       LIMIT 1`,
+     [userId],
+   );
+ 
+@@
+   if (!clientId) return null;
+ 
+-  const rows = await query(
+-    `SELECT *
+-         FROM usuario
+-         WHERE id_usuario = ? AND visible = 1
+-         LIMIT 1`,
+-    [clientId],
+-  );
+-  return rows[0] || null;
++  return getOperationalQrByUserId(clientId);
+ };
+@@
+-    const operationalQrCheck = await trx.query(
+-      `SELECT id_usuario 
+-       FROM vw_usuario 
+-       WHERE id_usuario = ? 
+-        AND qr_activo = 1
+-       LIMIT 1`,
++    const [operationalQrRows] = await trx.query(
++      `SELECT id_usuario
++       FROM vw_usuario
++       WHERE id_usuario = ?
++         AND visible = 1
++         AND activo_qr = 1
++         AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
++         AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
++       LIMIT 1`,
+       [solicitud.id_usuario]
+     );
+ 
+-    if (!operationalQrCheck || operationalQrCheck.length === 0) {
++    if (!operationalQrRows || operationalQrRows.length === 0) {
+       throw appError("El QR del usuario no estÃ¡ operativo o su vigencia no ha iniciado.", 409);
+     }
+@@
+ async function createTransactionRequest(req, res) {
+   try {
+     const provider = req.user;
+@@
+       );
+     }
+ 
+-    
+-    const operationalQrCheck = await query(
+-      `SELECT *
+-FROM vw_usuario
+-WHERE id_usuario = ?
+-  AND visible = 1
+-  AND activo_qr = 1
+-  AND (fec_vigencia_desde IS NULL OR fec_vigencia_desde <= NOW())
+-  AND (fec_vigencia_hasta IS NULL OR fec_vigencia_hasta >= NOW())
+-LIMIT 1`,
+-      [client.id_usuario]
+-    );
+-
+-    if (!operationalQrCheck || operationalQrCheck.length === 0) {
+-      return fail(res, "El QR del usuario no estÃ¡ operativo o su vigencia no ha iniciado.", 409);
+-    }
+-
+     const amount = Number(req.body.amount || req.body.monto || 0);
+     const tip = Number(req.body.tip || req.body.propina || 0);
+     const total = amount + tip;
+@@
+ 
+     if (amount <= 0 || !idEstablecimiento || !["app", "nip"].includes(metodo)) {
+       return fail(res, "Parametros de cobro invalidos.", 422);
+     }
++
++    const client = await getClientByPayload(req.body);
++    if (!client) {
++      return fail(res, "Cliente no identificado o QR no operativo.", 404);
++    }
++
++    const saldoCliente = Number(client.monto_deposito || 0);
++    if (saldoCliente < total) {
++      return fail(res, "Saldo insuficiente para realizar el consumo.", 422);
++    }
+ 
+     const establecimiento = await getEstablecimientoById(idEstablecimiento);
+*** End Patch

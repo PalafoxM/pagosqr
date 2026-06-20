@@ -11,6 +11,8 @@ export type PaymentMethod = "app" | "nip";
 export type ChargePayload = {
   qrCode: string;
   clientUserId?: number;
+  clientId?: number;
+  id_usuario?: number;
   amount: number;
   tip: number;
   description: string;
@@ -61,17 +63,22 @@ export async function createProviderCharge(
     body: JSON.stringify(payload),
   });
 
+  const responseText = await response.text();
+  let result: ApiResponse<ChargeResult> | null = null;
+
+  try {
+    result = responseText ? (JSON.parse(responseText) as ApiResponse<ChargeResult>) : null;
+  } catch {}
+
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(result?.respuesta || responseText || `HTTP ${response.status}`);
   }
 
-  const result = (await response.json()) as ApiResponse<ChargeResult>;
-
-  if (result.error) {
+  if (result?.error) {
     throw new Error(result.respuesta || "No se pudo crear el cobro.");
   }
 
-  return result.data || {};
+  return result?.data || {};
 }
 
 export async function getProviderEstablecimientos(

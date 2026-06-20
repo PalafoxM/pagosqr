@@ -139,7 +139,7 @@ export default function ProveedorScreen() {
   );
   const canCharge =
     Boolean(session) &&
-    qrCode.trim().length > 0 &&
+    Boolean(parsedClient?.id_usuario) &&
     subtotal > 0 &&
     selectedEstablecimientoId > 0 &&
     !submitting &&
@@ -152,7 +152,7 @@ export default function ProveedorScreen() {
 
   const handleCharge = async () => {
     if (!session || !canCharge) {
-      setError("Completa QR, establecimiento y monto para cobrar.");
+      setError("Escanea un QR de cliente valido y completa establecimiento y monto.");
       return;
     }
 
@@ -164,6 +164,8 @@ export default function ProveedorScreen() {
       const chargeResult = await createProviderCharge(session.token, {
         qrCode: qrCode.trim(),
         clientUserId: parsedClient?.id_usuario,
+        clientId: parsedClient?.id_usuario,
+        id_usuario: parsedClient?.id_usuario,
         amount: subtotal,
         tip: tipAmount,
         description: description.trim() || "Consumo en establecimiento",
@@ -171,7 +173,6 @@ export default function ProveedorScreen() {
         nip: paymentMethod === "nip" ? nip.trim() : undefined,
         idEstablecimiento: selectedEstablecimientoId,
       });
-
       setResult(chargeResult);
       setQrCode("");
       setAmount("");
