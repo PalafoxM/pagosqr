@@ -32,6 +32,12 @@ type NotificationPayload = {
 const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
 let notificationHandlerConfigured = false;
 
+const getExpoProjectId = () =>
+  process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+  Constants.expoConfig?.extra?.eas?.projectId ||
+  Constants.easConfig?.projectId ||
+  "";
+
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {
     throw new Error("No esta configurado EXPO_PUBLIC_API_BASE_URL.");
@@ -41,7 +47,16 @@ const getApiBaseUrl = () => {
 };
 
 async function loadNotifications(): Promise<NotificationsModule | null> {
+  console.log("[notifications] loadNotifications", {
+    appOwnership: Constants.appOwnership,
+    platform: Platform.OS,
+    isExpoGoAndroid,
+  });
+
   if (isExpoGoAndroid) {
+    console.warn(
+      "[notifications] Expo Go en Android no soporta push remoto desde SDK 53; usa development build o build instalada.",
+    );
     return null;
   }
 
@@ -106,21 +121,35 @@ async function savePushToken(token: string, expoPushToken: string) {
     app_version: Constants.expoConfig?.version || "",
   };
 
+  console.log("[notifications] savePushToken inicio", {
+    platform: payload.platform,
+    appVersion: payload.app_version,
+    tokenPreview: `${expoPushToken.slice(0, 18)}...`,
+  });
+
   try {
-    return await postAuthenticated("/auth/register-token", token, payload);
-  } catch {
-    return postAuthenticated("/notifications/register-token", token, payload);
+    const result = await postAuthenticated("/auth/register-token", token, payload);
+    console.log("[notifications] savePushToken /auth/register-token ok", result);
+    return result;
+  } catch (authError) {
+    console.warn("[notifications] /auth/register-token fallo, intentando fallback", authError);
+    const result = await postAuthenticated("/notifications/register-token", token, payload);
+    console.log("[notifications] savePushToken fallback ok", result);
+    return result;
   }
 }
 
 export async function registerPushToken(token: string) {
+  console.log("[notifications] registerPushToken inicio");
   const Notifications = await loadNotifications();
 
   if (!Notifications) {
+    console.warn("[notifications] modulo no disponible, no se registra push token");
     return null;
   }
 
   if (Platform.OS === "android") {
+    console.log("[notifications] configurando canal Android default");
     await Notifications.setNotificationChannelAsync("default", {
       name: "Pagos FIC",
       importance: Notifications.AndroidImportance.MAX,
@@ -131,21 +160,38 @@ export async function registerPushToken(token: string) {
 
   const currentPermissions = await Notifications.getPermissionsAsync();
   let finalStatus = currentPermissions.status;
+  console.log("[notifications] permisos actuales", currentPermissions);
 
   if (finalStatus !== "granted") {
     const requestedPermissions = await Notifications.requestPermissionsAsync();
     finalStatus = requestedPermissions.status;
+    console.log("[notifications] permisos solicitados", requestedPermissions);
   }
 
   if (finalStatus !== "granted") {
+    console.warn("[notifications] permisos no concedidos", { finalStatus });
     return null;
   }
 
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  const expoPushToken = projectId
-    ? (await Notifications.getExpoPushTokenAsync({ projectId })).data
-    : (await Notifications.getExpoPushTokenAsync()).data;
+  const projectId = getExpoProjectId();
+  console.log("[notifications] projectId", {
+    projectId: projectId || null,
+    hasEnvProjectId: Boolean(process.env.EXPO_PUBLIC_EAS_PROJECT_ID),
+    hasExpoConfigProjectId: Boolean(Constants.expoConfig?.extra?.eas?.projectId),
+    hasEasConfigProjectId: Boolean(Constants.easConfig?.projectId),
+  });
+
+  if (!projectId) {
+    console.warn(
+      "[notifications] falta EXPO_PUBLIC_EAS_PROJECT_ID; no se puede obtener Expo Push Token.",
+    );
+    return null;
+  }
+
+  const expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  console.log("[notifications] expoPushToken obtenido", {
+    tokenPreview: `${expoPushToken.slice(0, 18)}...`,
+  });
 
   await savePushToken(token, expoPushToken);
 
@@ -157,11 +203,13 @@ export const registerDeviceForPushNotifications = registerPushToken;
 export function observePaymentRequests(
   onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,
 ) {
+  console.log("[notifications] observePaymentRequests iniciado");
   let cleanup = () => {};
   let disposed = false;
 
   const showPaymentRequest = (notification: NotificationPayload) => {
     const data = notification.request.content.data;
+    console.log("[notifications] notificacion recibida", data);
 
     if (isPaymentRequestNotification(data)) {
       onPaymentRequest(data);
@@ -176,17 +224,20 @@ export function observePaymentRequests(
 
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response?.notification) {
+          console.log("[notifications] ultima respuesta de notificacion", response.notification.request.content.data);
           showPaymentRequest(response.notification);
         }
       });
 
       const receivedSubscription = Notifications.addNotificationReceivedListener(
         (notification) => {
+          console.log("[notifications] listener received", notification.request.content.data);
           showPaymentRequest(notification);
         },
       );
       const responseSubscription = Notifications.addNotificationResponseReceivedListener(
         (response) => {
+          console.log("[notifications] listener response", response.notification.request.content.data);
           showPaymentRequest(response.notification);
         },
       );

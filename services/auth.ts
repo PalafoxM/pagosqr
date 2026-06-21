@@ -101,17 +101,21 @@ export async function login(
     }),
   });
 
+  let result: ApiLoginResponse | null = null;
+
+  try {
+    result = (await response.json()) as ApiLoginResponse;
+  } catch {}
+
   if (!response.ok) {
-    throw new Error(`No se pudo conectar con la API. HTTP ${response.status}`);
+    throw new Error(result?.respuesta || `No se pudo conectar con la API. HTTP ${response.status}`);
   }
 
-  const result = (await response.json()) as ApiLoginResponse;
-
-  if (result.error) {
+  if (result?.error) {
     throw new Error(result.respuesta || "Usuario o contrasenia incorrectos.");
   }
 
-  const user = normalizeUser(result.data?.[0]);
+  const user = normalizeUser(result?.data?.[0]);
 
   if (!user.api_token) {
     throw new Error("La API no devolvio token de sesion.");

@@ -34,7 +34,9 @@ export default function LoginScreen() {
           const homePath = getHomePathForProfile(session.user.id_perfil);
 
           if (homePath) {
-            registerPushToken(session.token).catch(() => {});
+            registerPushToken(session.token).catch((pushError) => {
+              console.warn("No se pudo registrar push token.", pushError);
+            });
             router.replace(homePath);
             return;
           }
@@ -74,7 +76,9 @@ export default function LoginScreen() {
         return;
       }
 
-      registerPushToken(session.token).catch(() => {});
+      registerPushToken(session.token).catch((pushError) => {
+        console.warn("No se pudo registrar push token.", pushError);
+      });
       router.replace(homePath);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');
