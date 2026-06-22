@@ -11,6 +11,7 @@ import {
   View,
 } from "react-native";
 import { router, Stack } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import QRCode from "react-native-qrcode-svg";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
@@ -21,7 +22,7 @@ import {
   getEstablecimientosFic,
   getFallbackClienteProfile,
 } from "@/services/client-data";
-import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
+import { AuthSession, clearSession, getStoredSession, saveSession } from "@/services/auth";
 import {
   getPaymentRequestNotifications,
   PaymentRequestNotification,
@@ -33,6 +34,9 @@ import {
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
 
+const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
+const MAX_STORED_PAYMENT_REQUESTS = 80;
+
 const tabs: { id: ClienteTab; label: string }[] = [
   { id: "datos", label: "Mis datos" },
   { id: "establecimientos", label: "FIC" },
@@ -40,6 +44,26 @@ const tabs: { id: ClienteTab; label: string }[] = [
 ];
 
 const formatPaymentTotal = (value: unknown) => `$${Number(value || 0).toFixed(2)}`;
+
+const formatBalance = (value: unknown) => Number(value || 0).toFixed(2);
+
+const loadHandledPaymentRequestKeys = async () => {
+  try {
+    const storedKeys = await SecureStore.getItemAsync(HANDLED_PAYMENT_REQUESTS_KEY);
+    const parsedKeys = storedKeys ? JSON.parse(storedKeys) : [];
+
+    return Array.isArray(parsedKeys)
+      ? parsedKeys.filter((key): key is string => typeof key === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveHandledPaymentRequestKeys = async (keys: Set<string>) => {
+  const nextKeys = Array.from(keys).slice(-MAX_STORED_PAYMENT_REQUESTS);
+  await SecureStore.setItemAsync(HANDLED_PAYMENT_REQUESTS_KEY, JSON.stringify(nextKeys));
+};
 
 const openMapsForEstablecimiento = async (item: EstablecimientoFic) => {
   const query = [item.ubicacion, item.direccion, item.dsc_establecimiento]
@@ -78,6 +102,31 @@ export default function ClienteScreen() {
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
   const promptedPaymentRef = useRef<string | number | null>(null);
   const handledPaymentRequestsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    let mounted = true;
+
+    loadHandledPaymentRequestKeys().then((keys) => {
+      if (mounted) {
+        handledPaymentRequestsRef.current = new Set(keys);
+      }
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const persistHandledPaymentRequest = useCallback((transactionId: string | number | undefined) => {
+    const key = String(transactionId || "");
+
+    if (!key) {
+      return;
+    }
+
+    handledPaymentRequestsRef.current.add(key);
+    void saveHandledPaymentRequestKeys(handledPaymentRequestsRef.current);
+  }, []);
 
   useEffect(() => {
     sessionRef.current = session;
@@ -184,6 +233,57 @@ export default function ClienteScreen() {
     router.replace("/");
   }, []);
 
+  const refreshClienteProfile = useCallback(async (activeSession: AuthSession) => {
+    const nextProfile = await getClienteProfile(activeSession);
+    setProfile(nextProfile);
+
+    const nextSession = {
+      ...activeSession,
+      user: {
+        ...activeSession.user,
+        nombre: nextProfile.nombre_completo || activeSession.user.nombre,
+        nip: nextProfile.nip || activeSession.user.nip,
+        monto_deposito: nextProfile.monto_deposito,
+        qr: nextProfile.qr || activeSession.user.qr,
+      },
+    };
+
+    setSession(nextSession);
+    sessionRef.current = nextSession;
+    await saveSession(nextSession);
+  }, []);
+
+  const applyApprovedBalance = useCallback(
+    async (activeSession: AuthSession, balance: unknown) => {
+      const montoDeposito = formatBalance(balance);
+      const nextSession = {
+        ...activeSession,
+        user: {
+          ...activeSession.user,
+          monto_deposito: montoDeposito,
+        },
+      };
+
+      setProfile((currentProfile) =>
+        currentProfile ? { ...currentProfile, monto_deposito: montoDeposito } : currentProfile,
+      );
+      setSession(nextSession);
+      sessionRef.current = nextSession;
+      await saveSession(nextSession);
+
+      try {
+        await refreshClienteProfile(nextSession);
+      } catch (refreshError) {
+        setProfileError(
+          refreshError instanceof Error
+            ? refreshError.message
+            : "No se pudo refrescar el saldo del cliente.",
+        );
+      }
+    },
+    [refreshClienteProfile],
+  );
+
   const handlePaymentAction = useCallback(
     async (
       action: "approve" | "reject",
@@ -200,7 +300,15 @@ export default function ClienteScreen() {
 
       try {
         if (action === "approve") {
-          await approvePaymentRequest(activeSession.token, request.transactionId);
+          const approval = await approvePaymentRequest(activeSession.token, request.transactionId);
+
+          if (approval.current_balance !== undefined && approval.current_balance !== null) {
+            await applyApprovedBalance(activeSession, approval.current_balance);
+          } else {
+            await refreshClienteProfile(activeSession);
+          }
+
+          persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago aprobado correctamente.");
         } else {
           await rejectPaymentRequest(activeSession.token, request.transactionId);
@@ -216,7 +324,7 @@ export default function ClienteScreen() {
         setPaymentActionLoading(null);
       }
     },
-    [],
+    [applyApprovedBalance, persistHandledPaymentRequest, refreshClienteProfile],
   );
 
   const showPaymentRequestPrompt = useCallback(
@@ -233,7 +341,7 @@ export default function ClienteScreen() {
       }
 
       promptedPaymentRef.current = transactionId;
-      handledPaymentRequestsRef.current.add(transactionKey);
+      persistHandledPaymentRequest(transactionKey);
 
       const providerName = nextPaymentRequest.vendorName || "Proveedor FIC";
       const total = formatPaymentTotal(nextPaymentRequest.total);
@@ -270,7 +378,7 @@ export default function ClienteScreen() {
         ],
       );
     },
-    [handlePaymentAction],
+    [handlePaymentAction, persistHandledPaymentRequest],
   );
 
   useEffect(() => {

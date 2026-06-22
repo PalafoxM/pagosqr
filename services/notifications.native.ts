@@ -16,6 +16,18 @@ export type PaymentRequestNotification = {
 
 export type NotificationInteractionSource = "received" | "response";
 
+export type PaymentApprovalResponse = {
+  status?: "approved";
+  current_balance?: number | string;
+  transaction?: {
+    id?: number | string;
+    transaction_id?: string;
+    amount?: number | string;
+    tip?: number | string;
+    total?: number | string;
+    payment_id?: number | string;
+  };
+};
 type NotificationRow = {
   id_notification?: number;
   id?: number;
@@ -58,16 +70,14 @@ const getApiBaseUrl = () => {
 };
 
 async function loadNotifications(): Promise<NotificationsModule | null> {
-  console.log("[notifications] loadNotifications", {
-    appOwnership: Constants.appOwnership,
-    platform: Platform.OS,
-    isExpoGoAndroid,
-  });
-
   if (isExpoGoAndroid) {
-    console.warn(
-      "[notifications] Expo Go en Android no soporta push remoto desde SDK 53; usa development build o build instalada.",
-    );
+    if (!expoGoAndroidWarningShown) {
+      console.warn(
+        "[notifications] Expo Go en Android no soporta push remoto desde SDK 53; usa development build o build instalada.",
+      );
+      expoGoAndroidWarningShown = true;
+    }
+
     return null;
   }
 
@@ -120,6 +130,12 @@ const normalizePaymentRequestFromRow = (row: NotificationRow): PaymentRequestNot
   }
 
   if (isPaymentRequestNotification(data)) {
+    const status = String(data.status || "").toLowerCase();
+
+    if (status && !["pending", "pendiente"].includes(status)) {
+      return null;
+    }
+
     return data;
   }
 
@@ -360,7 +376,7 @@ export function observePaymentRequests(
 }
 
 export async function approvePaymentRequest(token: string, transactionId: string | number) {
-  return postAuthenticated("/transactions/approve", token, {
+  return postAuthenticated<PaymentApprovalResponse>("/transactions/approve", token, {
     transactionId,
   });
 }

@@ -13,6 +13,18 @@ export type PaymentRequestNotification = {
 
 export type NotificationInteractionSource = "received" | "response";
 
+export type PaymentApprovalResponse = {
+  status?: "approved";
+  current_balance?: number | string;
+  transaction?: {
+    id?: number | string;
+    transaction_id?: string;
+    amount?: number | string;
+    tip?: number | string;
+    total?: number | string;
+    payment_id?: number | string;
+  };
+};
 type ApiResponse<T> = {
   error?: boolean;
   respuesta?: string;
@@ -86,7 +98,7 @@ export function observePaymentRequests(
 }
 
 export async function approvePaymentRequest(token: string, transactionId: string | number) {
-  return postAuthenticated("/transactions/approve", token, {
+  return postAuthenticated<PaymentApprovalResponse>("/transactions/approve", token, {
     transactionId,
   });
 }
