@@ -14,6 +14,16 @@ export type PaymentRequestNotification = {
   description?: string;
 };
 
+export type NotificationInteractionSource = "received" | "response";
+
+type NotificationRow = {
+  id_notification?: number;
+  id?: number;
+  tipo?: string;
+  data_json?: string | Record<string, unknown>;
+  data?: Record<string, unknown>;
+};
+
 type ApiResponse<T> = {
   error?: boolean;
   respuesta?: string;
@@ -31,6 +41,7 @@ type NotificationPayload = {
 
 const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
 let notificationHandlerConfigured = false;
+let lastHandledNotificationResponseKey = "";
 
 const getExpoProjectId = () =>
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
@@ -85,6 +96,36 @@ export const isPaymentRequestNotification = (
   return payload.type === "PAYMENT_REQUEST" && Boolean(payload.transactionId);
 };
 
+const getNotificationResponseKey = (notification: NotificationPayload) => {
+  const data = notification.request.content.data;
+  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification) : {};
+
+  return [
+    payload.type || "",
+    payload.transactionId || "",
+    payload.total || "",
+    payload.vendorId || "",
+  ].join(":");
+};
+
+const normalizePaymentRequestFromRow = (row: NotificationRow): PaymentRequestNotification | null => {
+  let data: unknown = row.data || row.data_json;
+
+  if (typeof data === "string") {
+    try {
+      data = JSON.parse(data);
+    } catch {
+      data = null;
+    }
+  }
+
+  if (isPaymentRequestNotification(data)) {
+    return data;
+  }
+
+  return null;
+};
+
 async function postAuthenticated<T>(
   path: string,
   token: string,
@@ -99,6 +140,29 @@ async function postAuthenticated<T>(
       "X-API-Token": token,
     },
     body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const result = (await response.json()) as ApiResponse<T>;
+
+  if (result.error) {
+    throw new Error(result.respuesta || "La API devolvio un error.");
+  }
+
+  return result.data as T;
+}
+
+async function getAuthenticated<T>(path: string, token: string): Promise<T> {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "X-API-Token": token,
+    },
   });
 
   if (!response.ok) {
@@ -200,19 +264,35 @@ export async function registerPushToken(token: string) {
 
 export const registerDeviceForPushNotifications = registerPushToken;
 
+export const shouldUseInAppPaymentPolling = () => isExpoGoAndroid;
+
+export async function getPaymentRequestNotifications(token: string) {
+  const rows = await getAuthenticated<NotificationRow[]>("/notifications/my-notifications", token);
+
+  return (rows || [])
+    .map(normalizePaymentRequestFromRow)
+    .filter((item): item is PaymentRequestNotification => Boolean(item));
+}
+
 export function observePaymentRequests(
-  onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,
+  onPaymentRequest: (
+    paymentRequest: PaymentRequestNotification,
+    source: NotificationInteractionSource,
+  ) => void,
 ) {
   console.log("[notifications] observePaymentRequests iniciado");
   let cleanup = () => {};
   let disposed = false;
 
-  const showPaymentRequest = (notification: NotificationPayload) => {
+  const showPaymentRequest = (
+    notification: NotificationPayload,
+    source: NotificationInteractionSource,
+  ) => {
     const data = notification.request.content.data;
     console.log("[notifications] notificacion recibida", data);
 
     if (isPaymentRequestNotification(data)) {
-      onPaymentRequest(data);
+      onPaymentRequest(data, source);
     }
   };
 
@@ -224,21 +304,37 @@ export function observePaymentRequests(
 
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response?.notification) {
+          const responseKey = getNotificationResponseKey(response.notification);
+
+          if (responseKey && responseKey === lastHandledNotificationResponseKey) {
+            console.log("[notifications] ultima respuesta ya procesada", response.notification.request.content.data);
+            return;
+          }
+
+          lastHandledNotificationResponseKey = responseKey;
           console.log("[notifications] ultima respuesta de notificacion", response.notification.request.content.data);
-          showPaymentRequest(response.notification);
+          showPaymentRequest(response.notification, "response");
         }
       });
 
       const receivedSubscription = Notifications.addNotificationReceivedListener(
         (notification) => {
           console.log("[notifications] listener received", notification.request.content.data);
-          showPaymentRequest(notification);
+          showPaymentRequest(notification, "received");
         },
       );
       const responseSubscription = Notifications.addNotificationResponseReceivedListener(
         (response) => {
+          const responseKey = getNotificationResponseKey(response.notification);
+
+          if (responseKey && responseKey === lastHandledNotificationResponseKey) {
+            console.log("[notifications] respuesta ya procesada", response.notification.request.content.data);
+            return;
+          }
+
+          lastHandledNotificationResponseKey = responseKey;
           console.log("[notifications] listener response", response.notification.request.content.data);
-          showPaymentRequest(response.notification);
+          showPaymentRequest(response.notification, "response");
         },
       );
 

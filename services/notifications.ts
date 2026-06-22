@@ -11,6 +11,8 @@ export type PaymentRequestNotification = {
   description?: string;
 };
 
+export type NotificationInteractionSource = "received" | "response";
+
 type ApiResponse<T> = {
   error?: boolean;
   respuesta?: string;
@@ -68,8 +70,17 @@ export async function registerPushToken(_token: string) {
 
 export const registerDeviceForPushNotifications = registerPushToken;
 
+export const shouldUseInAppPaymentPolling = () => false;
+
+export async function getPaymentRequestNotifications(_token: string) {
+  return [] as PaymentRequestNotification[];
+}
+
 export function observePaymentRequests(
-  _onPaymentRequest: (paymentRequest: PaymentRequestNotification) => void,
+  _onPaymentRequest: (
+    paymentRequest: PaymentRequestNotification,
+    source: NotificationInteractionSource,
+  ) => void,
 ) {
   return () => {};
 }

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Linking,
   Platform,
   Pressable,
@@ -22,10 +23,12 @@ import {
 } from "@/services/client-data";
 import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
 import {
+  getPaymentRequestNotifications,
   PaymentRequestNotification,
   approvePaymentRequest,
   observePaymentRequests,
   rejectPaymentRequest,
+  shouldUseInAppPaymentPolling,
 } from "@/services/notifications";
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
@@ -35,6 +38,8 @@ const tabs: { id: ClienteTab; label: string }[] = [
   { id: "establecimientos", label: "FIC" },
   { id: "cuenta", label: "Cuenta" },
 ];
+
+const formatPaymentTotal = (value: unknown) => `$${Number(value || 0).toFixed(2)}`;
 
 const openMapsForEstablecimiento = async (item: EstablecimientoFic) => {
   const query = [item.ubicacion, item.direccion, item.dsc_establecimiento]
@@ -69,6 +74,18 @@ export default function ClienteScreen() {
     null,
   );
   const [paymentActionMessage, setPaymentActionMessage] = useState("");
+  const sessionRef = useRef<AuthSession | null>(null);
+  const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
+  const promptedPaymentRef = useRef<string | number | null>(null);
+  const handledPaymentRequestsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    paymentRequestRef.current = paymentRequest;
+  }, [paymentRequest]);
 
   useEffect(() => {
     let mounted = true;
@@ -167,40 +184,141 @@ export default function ClienteScreen() {
     router.replace("/");
   }, []);
 
+  const handlePaymentAction = useCallback(
+    async (
+      action: "approve" | "reject",
+      request: PaymentRequestNotification | null = paymentRequestRef.current,
+    ) => {
+      const activeSession = sessionRef.current;
+
+      if (!activeSession || !request?.transactionId) {
+        return;
+      }
+
+      setPaymentActionLoading(action);
+      setPaymentActionMessage("");
+
+      try {
+        if (action === "approve") {
+          await approvePaymentRequest(activeSession.token, request.transactionId);
+          setPaymentActionMessage("Pago aprobado correctamente.");
+        } else {
+          await rejectPaymentRequest(activeSession.token, request.transactionId);
+          setPaymentActionMessage("Pago rechazado correctamente.");
+        }
+
+        setPaymentRequest(null);
+      } catch (paymentError) {
+        setPaymentActionMessage(
+          paymentError instanceof Error ? paymentError.message : "No se pudo responder el pago.",
+        );
+      } finally {
+        setPaymentActionLoading(null);
+      }
+    },
+    [],
+  );
+
+  const showPaymentRequestPrompt = useCallback(
+    (nextPaymentRequest: PaymentRequestNotification) => {
+      const transactionId = nextPaymentRequest.transactionId;
+      const transactionKey = String(transactionId || "");
+
+      if (
+        !transactionId ||
+        promptedPaymentRef.current === transactionId ||
+        handledPaymentRequestsRef.current.has(transactionKey)
+      ) {
+        return;
+      }
+
+      promptedPaymentRef.current = transactionId;
+      handledPaymentRequestsRef.current.add(transactionKey);
+
+      const providerName = nextPaymentRequest.vendorName || "Proveedor FIC";
+      const total = formatPaymentTotal(nextPaymentRequest.total);
+      const description = nextPaymentRequest.description
+        ? `\n\n${nextPaymentRequest.description}`
+        : "";
+
+      Alert.alert(
+        "Solicitud de pago",
+        `${providerName}\nTotal: ${total}${description}`,
+        [
+          {
+            text: "Rechazar",
+            style: "destructive",
+            onPress: () => {
+              promptedPaymentRef.current = null;
+              handlePaymentAction("reject", nextPaymentRequest);
+            },
+          },
+          {
+            text: "Despues",
+            style: "cancel",
+            onPress: () => {
+              promptedPaymentRef.current = null;
+            },
+          },
+          {
+            text: "Aprobar",
+            onPress: () => {
+              promptedPaymentRef.current = null;
+              handlePaymentAction("approve", nextPaymentRequest);
+            },
+          },
+        ],
+      );
+    },
+    [handlePaymentAction],
+  );
+
   useEffect(() => {
-    return observePaymentRequests((nextPaymentRequest) => {
+    return observePaymentRequests((nextPaymentRequest, source) => {
       setPaymentRequest(nextPaymentRequest);
       setPaymentActionMessage("");
       setActiveTab("datos");
-    });
-  }, []);
 
-  const handlePaymentAction = async (action: "approve" | "reject") => {
-    if (!session || !paymentRequest?.transactionId) {
+      if (source === "response") {
+        showPaymentRequestPrompt(nextPaymentRequest);
+      }
+    });
+  }, [showPaymentRequestPrompt]);
+
+  useEffect(() => {
+    if (!session || !shouldUseInAppPaymentPolling()) {
       return;
     }
 
-    setPaymentActionLoading(action);
-    setPaymentActionMessage("");
+    let mounted = true;
 
-    try {
-      if (action === "approve") {
-        await approvePaymentRequest(session.token, paymentRequest.transactionId);
-        setPaymentActionMessage("Pago aprobado correctamente.");
-      } else {
-        await rejectPaymentRequest(session.token, paymentRequest.transactionId);
-        setPaymentActionMessage("Pago rechazado correctamente.");
+    const pollPaymentRequests = async () => {
+      try {
+        const requests = await getPaymentRequestNotifications(session.token);
+        const nextPaymentRequest = requests.find((request) => {
+          const key = String(request.transactionId || "");
+          return key && !handledPaymentRequestsRef.current.has(key);
+        });
+
+        if (mounted && nextPaymentRequest) {
+          setPaymentRequest(nextPaymentRequest);
+          setPaymentActionMessage("");
+          setActiveTab("datos");
+          showPaymentRequestPrompt(nextPaymentRequest);
+        }
+      } catch (pollError) {
+        console.warn("No se pudieron consultar solicitudes de pago.", pollError);
       }
+    };
 
-      setPaymentRequest(null);
-    } catch (paymentError) {
-      setPaymentActionMessage(
-        paymentError instanceof Error ? paymentError.message : "No se pudo responder el pago.",
-      );
-    } finally {
-      setPaymentActionLoading(null);
-    }
-  };
+    pollPaymentRequests();
+    const intervalId = setInterval(pollPaymentRequests, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [session, showPaymentRequestPrompt]);
 
   const qrPayload = useMemo(() => {
     if (!session) {
