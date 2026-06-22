@@ -9,6 +9,7 @@ export type PaymentRequestNotification = {
   vendorId?: number;
   vendorName?: string;
   description?: string;
+  status?: string;
 };
 
 export type NotificationInteractionSource = "received" | "response";

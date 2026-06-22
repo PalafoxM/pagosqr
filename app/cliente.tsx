@@ -98,6 +98,7 @@ export default function ClienteScreen() {
     null,
   );
   const [paymentActionMessage, setPaymentActionMessage] = useState("");
+  const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] = useState(false);
   const sessionRef = useRef<AuthSession | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
   const promptedPaymentRef = useRef<string | number | null>(null);
@@ -109,6 +110,7 @@ export default function ClienteScreen() {
     loadHandledPaymentRequestKeys().then((keys) => {
       if (mounted) {
         handledPaymentRequestsRef.current = new Set(keys);
+        setHandledPaymentRequestsLoaded(true);
       }
     });
 
@@ -312,6 +314,7 @@ export default function ClienteScreen() {
           setPaymentActionMessage("Pago aprobado correctamente.");
         } else {
           await rejectPaymentRequest(activeSession.token, request.transactionId);
+          persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago rechazado correctamente.");
         }
 
@@ -394,7 +397,7 @@ export default function ClienteScreen() {
   }, [showPaymentRequestPrompt]);
 
   useEffect(() => {
-    if (!session || !shouldUseInAppPaymentPolling()) {
+    if (!session || !handledPaymentRequestsLoaded || !shouldUseInAppPaymentPolling()) {
       return;
     }
 
@@ -426,7 +429,7 @@ export default function ClienteScreen() {
       mounted = false;
       clearInterval(intervalId);
     };
-  }, [session, showPaymentRequestPrompt]);
+  }, [handledPaymentRequestsLoaded, session, showPaymentRequestPrompt]);
 
   const qrPayload = useMemo(() => {
     if (!session) {

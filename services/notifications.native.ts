@@ -12,6 +12,7 @@ export type PaymentRequestNotification = {
   vendorId?: number;
   vendorName?: string;
   description?: string;
+  status?: string;
 };
 
 export type NotificationInteractionSource = "received" | "response";
@@ -54,6 +55,7 @@ type NotificationPayload = {
 const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
 let notificationHandlerConfigured = false;
 let lastHandledNotificationResponseKey = "";
+let expoGoAndroidWarningShown = false;
 
 const getExpoProjectId = () =>
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
