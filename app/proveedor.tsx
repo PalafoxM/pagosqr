@@ -16,6 +16,7 @@ import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
 import {
   ChargeResult,
   createProviderCharge,
+  getProviderChargeStatus,
   getProviderEstablecimientos,
   PaymentMethod,
   ProviderEstablecimiento,
@@ -144,11 +145,50 @@ export default function ProveedorScreen() {
     selectedEstablecimientoId > 0 &&
     !submitting &&
     (paymentMethod === "app" || nip.trim().length > 0);
+  const isPaymentApproved = result?.status === "approved";
+  const isPaymentPending = result?.status === "pending";
 
   const handleLogout = async () => {
     await clearSession();
     router.replace("/");
   };
+
+  useEffect(() => {
+    if (!session || !result?.supportsStatusPolling || result.status !== "pending") {
+      return;
+    }
+
+    let mounted = true;
+    const transactionId = result.id || result.transaction_id;
+
+    if (!transactionId) {
+      return;
+    }
+
+    const pollStatus = async () => {
+      try {
+        const nextResult = await getProviderChargeStatus(session.token, transactionId);
+
+        if (mounted && nextResult.status && nextResult.status !== "pending") {
+          setResult((currentResult) => ({
+            ...currentResult,
+            ...nextResult,
+            supportsStatusPolling: false,
+          }));
+        }
+      } catch (statusError) {
+        console.warn("No se pudo consultar estatus del cobro.", statusError);
+      }
+    };
+
+    pollStatus();
+    const intervalId = setInterval(pollStatus, 3000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [result, session]);
 
   const handleCharge = async () => {
     if (!session || !canCharge) {
@@ -415,11 +455,16 @@ export default function ProveedorScreen() {
             {error ? <Text style={styles.error}>{error}</Text> : null}
 
             <Pressable
-              disabled={!canCharge}
+              disabled={!canCharge || isPaymentApproved || isPaymentPending}
               onPress={handleCharge}
               style={({ pressed }) => [
                 styles.primaryButton,
-                (!canCharge || pressed) && styles.primaryButtonPressed,
+                isPaymentApproved && styles.primaryButtonSuccess,
+                isPaymentPending && styles.primaryButtonWaiting,
+                (!canCharge || pressed) &&
+                  !isPaymentApproved &&
+                  !isPaymentPending &&
+                  styles.primaryButtonPressed,
               ]}>
               {submitting ? (
                 <ActivityIndicator color="#fff8e8" />
@@ -427,7 +472,13 @@ export default function ProveedorScreen() {
                 <>
                   <IconSymbol color="#fff8e8" name="checkmark.seal.fill" size={20} />
                   <Text style={styles.primaryButtonText}>
-                    {paymentMethod === "app" ? "Enviar notificacion" : "Cobrar ahora"}
+                    {isPaymentApproved
+                      ? "Pago exitoso"
+                      : isPaymentPending
+                        ? "Esperando aprobacion"
+                        : paymentMethod === "app"
+                          ? "Enviar notificacion"
+                          : "Cobrar ahora"}
                   </Text>
                 </>
               )}
@@ -435,7 +486,7 @@ export default function ProveedorScreen() {
           </View>
 
           {result ? (
-            <View style={styles.resultPanel}>
+            <View style={[styles.resultPanel, isPaymentApproved && styles.resultPanelSuccess]}>
               <Text style={styles.resultTitle}>
                 {result.status === "approved" ? "Pago aprobado" : "Solicitud enviada"}
               </Text>
@@ -727,6 +778,16 @@ const styles = StyleSheet.create({
   primaryButtonPressed: {
     opacity: 0.6,
   },
+  primaryButtonSuccess: {
+    backgroundColor: "#15803d",
+    borderColor: "#166534",
+    opacity: 1,
+  },
+  primaryButtonWaiting: {
+    backgroundColor: "#6f5639",
+    borderColor: "#3b2619",
+    opacity: 1,
+  },
   primaryButtonText: {
     color: "#fff8e8",
     fontSize: 16,
@@ -739,6 +800,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 6,
     padding: 16,
+  },
+  resultPanelSuccess: {
+    backgroundColor: "#dcfce7",
+    borderColor: "#15803d",
   },
   resultTitle: {
     color: "#24160f",

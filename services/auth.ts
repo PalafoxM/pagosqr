@@ -32,7 +32,8 @@ type ApiLoginResponse = {
 
 type StoredAuthUser = Omit<AuthUser, "api_token" | "raw">;
 
-const getString = (value: unknown) => (typeof value === "string" ? value : "");
+const getString = (value: unknown) =>
+  value === null || value === undefined ? "" : String(value);
 
 const getNumber = (value: unknown) => {
   const parsed = Number(value);
@@ -116,7 +117,7 @@ export async function login(
   }
 
   const user = normalizeUser(result?.data?.[0]);
-
+ 
   if (!user.api_token) {
     throw new Error("La API no devolvio token de sesion.");
   }

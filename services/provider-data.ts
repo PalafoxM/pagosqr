@@ -81,6 +81,40 @@ export async function createProviderCharge(
   return result?.data || {};
 }
 
+export async function getProviderChargeStatus(
+  token: string,
+  transactionId: string | number,
+): Promise<ChargeResult> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/transactions/${encodeURIComponent(String(transactionId))}/status`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-API-Token": token,
+      },
+    },
+  );
+
+  const responseText = await response.text();
+  let result: ApiResponse<ChargeResult> | null = null;
+
+  try {
+    result = responseText ? (JSON.parse(responseText) as ApiResponse<ChargeResult>) : null;
+  } catch {}
+
+  if (!response.ok) {
+    throw new Error(result?.respuesta || responseText || `HTTP ${response.status}`);
+  }
+
+  if (result?.error) {
+    throw new Error(result.respuesta || "No se pudo consultar el estatus del cobro.");
+  }
+
+  return result?.data || {};
+}
+
 export async function getProviderEstablecimientos(
   token: string,
   providerRef: number,

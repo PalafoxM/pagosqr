@@ -1,3 +1,5 @@
+import { router, Stack } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -10,11 +12,10 @@ import {
   Text,
   View,
 } from "react-native";
-import { router, Stack } from "expo-router";
-import * as SecureStore from "expo-secure-store";
 import QRCode from "react-native-qrcode-svg";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
+import { AuthSession, clearSession, getStoredSession, saveSession } from "@/services/auth";
 import {
   ClienteProfile,
   EstablecimientoFic,
@@ -22,12 +23,11 @@ import {
   getEstablecimientosFic,
   getFallbackClienteProfile,
 } from "@/services/client-data";
-import { AuthSession, clearSession, getStoredSession, saveSession } from "@/services/auth";
 import {
-  getPaymentRequestNotifications,
-  PaymentRequestNotification,
   approvePaymentRequest,
+  getPaymentRequestNotifications,
   observePaymentRequests,
+  PaymentRequestNotification,
   rejectPaymentRequest,
   shouldUseInAppPaymentPolling,
 } from "@/services/notifications";
@@ -547,6 +547,13 @@ export default function ClienteScreen() {
 
           {activeTab === "datos" ? (
             <View style={styles.panel}>
+              <View style={styles.balancePanel}>
+                <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                <Text style={styles.balanceValue}>
+                  ${formatBalance(profile?.monto_deposito || session?.user.monto_deposito)}
+                </Text>
+              </View>
+
               <View style={styles.qrBox}>
                 {qrPayload ? (
                   <View style={styles.qrFrame}>
@@ -563,8 +570,6 @@ export default function ClienteScreen() {
               </View>
 
               <InfoRow label="Nombre completo" value={profile?.nombre_completo} />
-              <InfoRow label="NIP" value={profile?.nip} />
-              <InfoRow label="Monto deposito" value={profile?.monto_deposito} />
               <InfoRow label="ID usuario" value={String(session?.user.id_usuario || "")} />
 
               {profileLoading ? <ActivityIndicator color="#0f766e" /> : null}
@@ -617,6 +622,7 @@ export default function ClienteScreen() {
             <View style={styles.panel}>
               <InfoRow label="Usuario" value={session?.user.usuario} />
               <InfoRow label="Perfil" value="Cliente (3)" />
+              <InfoRow label="NIP" value={profile?.nip || session?.user.nip} />
 
               <Pressable onPress={handleLogout} style={styles.secondaryButton}>
                 <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
@@ -839,6 +845,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     lineHeight: 20,
+  },
+  balancePanel: {
+    backgroundColor: "#24160f",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  balanceLabel: {
+    color: "#d5a84f",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  balanceValue: {
+    color: "#fff8e8",
+    fontSize: 38,
+    fontWeight: "900",
+    lineHeight: 44,
   },
   qrBox: {
     alignItems: "center",

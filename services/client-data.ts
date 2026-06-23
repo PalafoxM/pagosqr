@@ -36,7 +36,8 @@ const getApiBaseUrl = () => {
   return API_BASE_URL.replace(/\/$/, "");
 };
 
-const getString = (value: unknown) => (typeof value === "string" ? value : "");
+const getString = (value: unknown) =>
+  value === null || value === undefined ? "" : String(value);
 
 const getNumber = (value: unknown) => {
   const parsed = Number(value);
