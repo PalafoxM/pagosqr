@@ -153,6 +153,18 @@ export default function ProveedorScreen() {
     router.replace("/");
   };
 
+  const handleResetCharge = () => {
+    setQrCode("");
+    setAmount("");
+    setTip("");
+    setDescription("Consumo en establecimiento");
+    setPaymentMethod("app");
+    setNip("");
+    setError("");
+    setResult(null);
+    setScannerOpen(false);
+  };
+
   useEffect(() => {
     if (!session || !result?.supportsStatusPolling || result.status !== "pending") {
       return;
@@ -280,8 +292,14 @@ export default function ProveedorScreen() {
 
           <View style={styles.panel}>
             <View style={styles.panelHeader}>
-              <IconSymbol color="#8f1d2c" name="qrcode.viewfinder" size={24} />
-              <Text style={styles.panelTitle}>Nuevo cobro</Text>
+              <Pressable
+                accessibilityLabel="Nuevo cobro"
+                accessibilityRole="button"
+                onPress={handleResetCharge}
+                style={({ pressed }) => [styles.newChargeButton, pressed && styles.pressed]}>
+                <IconSymbol color="#fff8e8" name="qrcode.viewfinder" size={22} />
+                <Text style={[styles.panelTitle, styles.newChargeButtonText]}>Nuevo cobro</Text>
+              </Pressable>
             </View>
 
             <View style={styles.field}>
@@ -473,7 +491,7 @@ export default function ProveedorScreen() {
                   <IconSymbol color="#fff8e8" name="checkmark.seal.fill" size={20} />
                   <Text style={styles.primaryButtonText}>
                     {isPaymentApproved
-                      ? "Pago exitoso"
+                      ? "Realizado"
                       : isPaymentPending
                         ? "Esperando aprobacion"
                         : paymentMethod === "app"
@@ -488,7 +506,7 @@ export default function ProveedorScreen() {
           {result ? (
             <View style={[styles.resultPanel, isPaymentApproved && styles.resultPanelSuccess]}>
               <Text style={styles.resultTitle}>
-                {result.status === "approved" ? "Pago aprobado" : "Solicitud enviada"}
+                {result.status === "approved" ? "Pago realizado" : "Solicitud enviada"}
               </Text>
               <Text style={styles.resultText}>Folio: {result.transaction_id || result.id}</Text>
               <Text style={styles.resultText}>Total: ${(Number(result.total) || total).toFixed(2)}</Text>
@@ -580,7 +598,22 @@ const styles = StyleSheet.create({
   panelHeader: {
     alignItems: "center",
     flexDirection: "row",
+  },
+  newChargeButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#8f1d2c",
+    borderColor: "#6f141f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
     gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  newChargeButtonText: {
+    color: "#fff8e8",
+    fontSize: 15,
   },
   panelTitle: {
     color: "#24160f",

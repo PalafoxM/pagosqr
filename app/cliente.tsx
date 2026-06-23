@@ -1,3 +1,4 @@
+import { CameraView, useCameraPermissions } from "expo-camera";
 import { router, Stack } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,10 +14,17 @@ import {
   View,
 } from "react-native";
 import QRCode from "react-native-qrcode-svg";
+import SignatureScreen, { SignatureViewRef } from "react-native-signature-canvas";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { AuthSession, clearSession, getStoredSession, saveSession } from "@/services/auth";
 import {
+  AuthSession,
+  clearSession,
+  getStoredSession,
+  saveSession,
+} from "@/services/auth";
+import {
+  activateClienteQr,
   ClienteProfile,
   EstablecimientoFic,
   getClienteProfile,
@@ -33,6 +41,7 @@ import {
 } from "@/services/notifications";
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
+type ActivationStep = "idle" | "front" | "back" | "signature";
 
 const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
 const MAX_STORED_PAYMENT_REQUESTS = 80;
@@ -43,13 +52,50 @@ const tabs: { id: ClienteTab; label: string }[] = [
   { id: "cuenta", label: "Cuenta" },
 ];
 
-const formatPaymentTotal = (value: unknown) => `$${Number(value || 0).toFixed(2)}`;
+const formatPaymentTotal = (value: unknown) =>
+  `$${Number(value || 0).toFixed(2)}`;
 
 const formatBalance = (value: unknown) => Number(value || 0).toFixed(2);
 
+const signatureCanvasWebStyle = `
+  .m-signature-pad {
+    background-color: #fff8e8;
+    border: 0;
+    box-shadow: none;
+    height: 100%;
+    width: 100%;
+  }
+  .m-signature-pad--body {
+    border: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: 0;
+  }
+  .m-signature-pad--body canvas {
+    background-color: #fff8e8;
+    border-radius: 8px;
+    height: 100% !important;
+    width: 100% !important;
+  }
+  .m-signature-pad--footer {
+    display: none;
+  }
+  body, html {
+    background-color: #fff8e8;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    width: 100%;
+  }
+`;
+
+
 const loadHandledPaymentRequestKeys = async () => {
   try {
-    const storedKeys = await SecureStore.getItemAsync(HANDLED_PAYMENT_REQUESTS_KEY);
+    const storedKeys = await SecureStore.getItemAsync(
+      HANDLED_PAYMENT_REQUESTS_KEY,
+    );
     const parsedKeys = storedKeys ? JSON.parse(storedKeys) : [];
 
     return Array.isArray(parsedKeys)
@@ -62,7 +108,10 @@ const loadHandledPaymentRequestKeys = async () => {
 
 const saveHandledPaymentRequestKeys = async (keys: Set<string>) => {
   const nextKeys = Array.from(keys).slice(-MAX_STORED_PAYMENT_REQUESTS);
-  await SecureStore.setItemAsync(HANDLED_PAYMENT_REQUESTS_KEY, JSON.stringify(nextKeys));
+  await SecureStore.setItemAsync(
+    HANDLED_PAYMENT_REQUESTS_KEY,
+    JSON.stringify(nextKeys),
+  );
 };
 
 const openMapsForEstablecimiento = async (item: EstablecimientoFic) => {
@@ -90,15 +139,32 @@ export default function ClienteScreen() {
   const [profile, setProfile] = useState<ClienteProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [establecimientos, setEstablecimientos] = useState<EstablecimientoFic[]>([]);
+  const [establecimientos, setEstablecimientos] = useState<
+    EstablecimientoFic[]
+  >([]);
   const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
   const [establecimientosError, setEstablecimientosError] = useState("");
-  const [paymentRequest, setPaymentRequest] = useState<PaymentRequestNotification | null>(null);
-  const [paymentActionLoading, setPaymentActionLoading] = useState<"approve" | "reject" | null>(
-    null,
-  );
+  const [paymentRequest, setPaymentRequest] =
+    useState<PaymentRequestNotification | null>(null);
+  const [paymentActionLoading, setPaymentActionLoading] = useState<
+    "approve" | "reject" | null
+  >(null);
   const [paymentActionMessage, setPaymentActionMessage] = useState("");
-  const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] = useState(false);
+  const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] =
+    useState(false);
+  const [activationStep, setActivationStep] = useState<ActivationStep>("idle");
+  const [ineFront, setIneFront] = useState("");
+  const [ineBack, setIneBack] = useState("");
+  const [signatureImage, setSignatureImage] = useState("");
+  const [signatureScrollLocked, setSignatureScrollLocked] = useState(false);
+  const [activationLoading, setActivationLoading] = useState(false);
+  const [activationMessage, setActivationMessage] = useState("");
+  const [activationError, setActivationError] = useState("");
+  const [activationCaptureHint, setActivationCaptureHint] = useState("");
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef<any>(null);
+  const signatureRef = useRef<SignatureViewRef | null>(null);
+  const signatureSubmitPendingRef = useRef(false);
   const sessionRef = useRef<AuthSession | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
   const promptedPaymentRef = useRef<string | number | null>(null);
@@ -119,16 +185,19 @@ export default function ClienteScreen() {
     };
   }, []);
 
-  const persistHandledPaymentRequest = useCallback((transactionId: string | number | undefined) => {
-    const key = String(transactionId || "");
+  const persistHandledPaymentRequest = useCallback(
+    (transactionId: string | number | undefined) => {
+      const key = String(transactionId || "");
 
-    if (!key) {
-      return;
-    }
+      if (!key) {
+        return;
+      }
 
-    handledPaymentRequestsRef.current.add(key);
-    void saveHandledPaymentRequestKeys(handledPaymentRequestsRef.current);
-  }, []);
+      handledPaymentRequestsRef.current.add(key);
+      void saveHandledPaymentRequestKeys(handledPaymentRequestsRef.current);
+    },
+    [],
+  );
 
   useEffect(() => {
     sessionRef.current = session;
@@ -180,7 +249,9 @@ export default function ClienteScreen() {
       .catch((error) => {
         if (mounted) {
           setProfileError(
-            error instanceof Error ? error.message : "No se pudo consultar vw_usuario.",
+            error instanceof Error
+              ? error.message
+              : "No se pudo consultar vw_usuario.",
           );
         }
       })
@@ -195,6 +266,35 @@ export default function ClienteScreen() {
     };
   }, [session]);
 
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    let mounted = true;
+
+    const refreshVisibleBalance = async () => {
+      try {
+        const nextProfile = await getClienteProfile(session);
+
+        if (mounted) {
+          setProfile(nextProfile);
+        }
+      } catch (refreshError) {
+        console.warn(
+          "No se pudo refrescar el saldo del cliente.",
+          refreshError,
+        );
+      }
+    };
+
+    const intervalId = setInterval(refreshVisibleBalance, 5000);
+
+    return () => {
+      mounted = false;
+      clearInterval(intervalId);
+    };
+  }, [session]);
   useEffect(() => {
     if (!session) {
       return;
@@ -230,30 +330,154 @@ export default function ClienteScreen() {
     };
   }, [session]);
 
+  const resetActivation = useCallback(() => {
+    setActivationStep("idle");
+    setIneFront("");
+    setIneBack("");
+    setSignatureImage("");
+    setActivationCaptureHint("");
+    setActivationError("");
+  }, []);
+
+  const handleStartActivation = useCallback(async () => {
+    setActivationMessage("");
+    setActivationCaptureHint("");
+    setActivationError("");
+
+    if (!cameraPermission?.granted) {
+      const permission = await requestCameraPermission();
+
+      if (!permission.granted) {
+        setActivationError(
+          "Se necesita permiso de camara para fotografiar la credencial.",
+        );
+        return;
+      }
+    }
+
+    setIneFront("");
+    setIneBack("");
+    setSignatureImage("");
+    setActivationStep("front");
+  }, [cameraPermission?.granted, requestCameraPermission]);
+
+  const handleCaptureIne = useCallback(async () => {
+    if (!cameraRef.current || !["front", "back"].includes(activationStep)) {
+      return;
+    }
+
+    setActivationError("");
+
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.55,
+        skipProcessing: true,
+      });
+      const imageData = `data:image/jpeg;base64,${photo.base64}`;
+
+      if (activationStep === "front") {
+        setIneFront(imageData);
+        setActivationCaptureHint("Frente capturado. Siguiente: reverso.");
+        setActivationStep("back");
+        setTimeout(() => setActivationCaptureHint(""), 1600);
+      } else {
+        setIneBack(imageData);
+        setActivationCaptureHint("Reverso capturado. Siguiente: firma.");
+        setActivationStep("signature");
+        setTimeout(() => setActivationCaptureHint(""), 1600);
+      }
+    } catch (captureError) {
+      setActivationError(
+        captureError instanceof Error
+          ? captureError.message
+          : "No se pudo tomar la fotografia.",
+      );
+    }
+  }, [activationStep]);
+
+  const saveActivationWithSignature = useCallback(
+    async (signature: string) => {
+      const activeSession = sessionRef.current;
+
+      if (!activeSession || !ineFront || !ineBack || !signature) {
+        setActivationError("Captura frente, reverso y firma para activar el QR.");
+        setActivationLoading(false);
+        return;
+      }
+
+      if (!signature.toLowerCase().startsWith("data:image/png")) {
+        setActivationError(
+          "La firma debe generarse como PNG. Limpia la firma e intenta de nuevo.",
+        );
+        setActivationLoading(false);
+        return;
+      }
+
+      setActivationError("");
+      setActivationMessage("");
+
+      try {
+        await activateClienteQr(activeSession.token, {
+          ine_frontal: ineFront,
+          ine_trasera: ineBack,
+          firma: signature,
+        });
+        setActivationMessage(
+          "Documentos guardados correctamente. Tu activacion QR quedo en revision.",
+        );
+        resetActivation();
+      } catch (activationSaveError) {
+        setActivationError(
+          activationSaveError instanceof Error
+            ? activationSaveError.message
+            : "No se pudo guardar la activacion QR.",
+        );
+      } finally {
+        setActivationLoading(false);
+      }
+    },
+    [ineBack, ineFront, resetActivation],
+  );
+
+  const handleSubmitActivation = useCallback(() => {
+    if (!ineFront || !ineBack) {
+      setActivationError("Captura frente y reverso para activar el QR.");
+      return;
+    }
+
+    signatureSubmitPendingRef.current = true;
+    setActivationLoading(true);
+    setActivationError("");
+    signatureRef.current?.readSignature();
+  }, [ineBack, ineFront]);
   const handleLogout = useCallback(async () => {
     await clearSession();
     router.replace("/");
   }, []);
 
-  const refreshClienteProfile = useCallback(async (activeSession: AuthSession) => {
-    const nextProfile = await getClienteProfile(activeSession);
-    setProfile(nextProfile);
+  const refreshClienteProfile = useCallback(
+    async (activeSession: AuthSession) => {
+      const nextProfile = await getClienteProfile(activeSession);
+      setProfile(nextProfile);
 
-    const nextSession = {
-      ...activeSession,
-      user: {
-        ...activeSession.user,
-        nombre: nextProfile.nombre_completo || activeSession.user.nombre,
-        nip: nextProfile.nip || activeSession.user.nip,
-        monto_deposito: nextProfile.monto_deposito,
-        qr: nextProfile.qr || activeSession.user.qr,
-      },
-    };
+      const nextSession = {
+        ...activeSession,
+        user: {
+          ...activeSession.user,
+          nombre: nextProfile.nombre_completo || activeSession.user.nombre,
+          nip: nextProfile.nip || activeSession.user.nip,
+          monto_deposito: nextProfile.monto_deposito,
+          qr: nextProfile.qr || activeSession.user.qr,
+        },
+      };
 
-    setSession(nextSession);
-    sessionRef.current = nextSession;
-    await saveSession(nextSession);
-  }, []);
+      setSession(nextSession);
+      sessionRef.current = nextSession;
+      await saveSession(nextSession);
+    },
+    [],
+  );
 
   const applyApprovedBalance = useCallback(
     async (activeSession: AuthSession, balance: unknown) => {
@@ -267,7 +491,9 @@ export default function ClienteScreen() {
       };
 
       setProfile((currentProfile) =>
-        currentProfile ? { ...currentProfile, monto_deposito: montoDeposito } : currentProfile,
+        currentProfile
+          ? { ...currentProfile, monto_deposito: montoDeposito }
+          : currentProfile,
       );
       setSession(nextSession);
       sessionRef.current = nextSession;
@@ -302,9 +528,15 @@ export default function ClienteScreen() {
 
       try {
         if (action === "approve") {
-          const approval = await approvePaymentRequest(activeSession.token, request.transactionId);
+          const approval = await approvePaymentRequest(
+            activeSession.token,
+            request.transactionId,
+          );
 
-          if (approval.current_balance !== undefined && approval.current_balance !== null) {
+          if (
+            approval.current_balance !== undefined &&
+            approval.current_balance !== null
+          ) {
             await applyApprovedBalance(activeSession, approval.current_balance);
           } else {
             await refreshClienteProfile(activeSession);
@@ -313,7 +545,10 @@ export default function ClienteScreen() {
           persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago aprobado correctamente.");
         } else {
-          await rejectPaymentRequest(activeSession.token, request.transactionId);
+          await rejectPaymentRequest(
+            activeSession.token,
+            request.transactionId,
+          );
           persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago rechazado correctamente.");
         }
@@ -321,7 +556,9 @@ export default function ClienteScreen() {
         setPaymentRequest(null);
       } catch (paymentError) {
         setPaymentActionMessage(
-          paymentError instanceof Error ? paymentError.message : "No se pudo responder el pago.",
+          paymentError instanceof Error
+            ? paymentError.message
+            : "No se pudo responder el pago.",
         );
       } finally {
         setPaymentActionLoading(null);
@@ -397,7 +634,11 @@ export default function ClienteScreen() {
   }, [showPaymentRequestPrompt]);
 
   useEffect(() => {
-    if (!session || !handledPaymentRequestsLoaded || !shouldUseInAppPaymentPolling()) {
+    if (
+      !session ||
+      !handledPaymentRequestsLoaded ||
+      !shouldUseInAppPaymentPolling()
+    ) {
       return;
     }
 
@@ -418,7 +659,10 @@ export default function ClienteScreen() {
           showPaymentRequestPrompt(nextPaymentRequest);
         }
       } catch (pollError) {
-        console.warn("No se pudieron consultar solicitudes de pago.", pollError);
+        console.warn(
+          "No se pudieron consultar solicitudes de pago.",
+          pollError,
+        );
       }
     };
 
@@ -448,7 +692,9 @@ export default function ClienteScreen() {
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
-      style={styles.screen}>
+      scrollEnabled={!signatureScrollLocked}
+      style={styles.screen}
+    >
       <Stack.Screen options={{ title: "Cliente" }} />
 
       {checkingSession ? (
@@ -463,15 +709,25 @@ export default function ClienteScreen() {
               <View style={styles.lance} />
             </View>
             <View style={styles.bannerCopy}>
-              <Text style={styles.kicker}>Festival Internacional Cervantino</Text>
-              <Text style={styles.title}>Hola, {profile?.nombre_completo || "cliente"}</Text>
-              <Text style={styles.body}>Credencial inspirada en Don Quijote.</Text>
+              <Text style={styles.kicker}>
+                Festival Internacional Cervantino
+              </Text>
+              <Text style={styles.title}>
+                Hola, {profile?.nombre_completo || "cliente"}
+              </Text>
+              <Text style={styles.body}>
+                Credencial inspirada en Don Quijote.
+              </Text>
             </View>
             <Pressable
               accessibilityLabel="Cerrar sesion"
               accessibilityRole="button"
               onPress={handleLogout}
-              style={({ pressed }) => [styles.logoutButton, pressed && styles.pressed]}>
+              style={({ pressed }) => [
+                styles.logoutButton,
+                pressed && styles.pressed,
+              ]}
+            >
               <IconSymbol
                 color="#fff8e8"
                 name="rectangle.portrait.and.arrow.right"
@@ -490,8 +746,11 @@ export default function ClienteScreen() {
                   accessibilityState={{ selected }}
                   key={tab.id}
                   onPress={() => setActiveTab(tab.id)}
-                  style={[styles.tabButton, selected && styles.tabButtonActive]}>
-                  <Text style={[styles.tabText, selected && styles.tabTextActive]}>
+                  style={[styles.tabButton, selected && styles.tabButtonActive]}
+                >
+                  <Text
+                    style={[styles.tabText, selected && styles.tabTextActive]}
+                  >
                     {tab.label}
                   </Text>
                 </Pressable>
@@ -506,7 +765,9 @@ export default function ClienteScreen() {
                 {paymentRequest.vendorName || "Proveedor FIC"}
               </Text>
               {paymentRequest.description ? (
-                <Text style={styles.paymentText}>{paymentRequest.description}</Text>
+                <Text style={styles.paymentText}>
+                  {paymentRequest.description}
+                </Text>
               ) : null}
               <View style={styles.paymentTotalRow}>
                 <Text style={styles.paymentText}>Total</Text>
@@ -520,8 +781,10 @@ export default function ClienteScreen() {
                   onPress={() => handlePaymentAction("reject")}
                   style={({ pressed }) => [
                     styles.rejectButton,
-                    (pressed || paymentActionLoading === "reject") && styles.pressed,
-                  ]}>
+                    (pressed || paymentActionLoading === "reject") &&
+                      styles.pressed,
+                  ]}
+                >
                   <Text style={styles.rejectButtonText}>Rechazar</Text>
                 </Pressable>
                 <Pressable
@@ -529,8 +792,10 @@ export default function ClienteScreen() {
                   onPress={() => handlePaymentAction("approve")}
                   style={({ pressed }) => [
                     styles.approveButton,
-                    (pressed || paymentActionLoading === "approve") && styles.pressed,
-                  ]}>
+                    (pressed || paymentActionLoading === "approve") &&
+                      styles.pressed,
+                  ]}
+                >
                   {paymentActionLoading === "approve" ? (
                     <ActivityIndicator color="#fff8e8" />
                   ) : (
@@ -550,7 +815,10 @@ export default function ClienteScreen() {
               <View style={styles.balancePanel}>
                 <Text style={styles.balanceLabel}>Saldo disponible</Text>
                 <Text style={styles.balanceValue}>
-                  ${formatBalance(profile?.monto_deposito || session?.user.monto_deposito)}
+                  $
+                  {formatBalance(
+                    profile?.monto_deposito || session?.user.monto_deposito,
+                  )}
                 </Text>
               </View>
 
@@ -569,30 +837,45 @@ export default function ClienteScreen() {
                 )}
               </View>
 
-              <InfoRow label="Nombre completo" value={profile?.nombre_completo} />
-              <InfoRow label="ID usuario" value={String(session?.user.id_usuario || "")} />
+              <InfoRow
+                label="Nombre completo"
+                value={profile?.nombre_completo}
+              />
+              <InfoRow
+                label="ID usuario"
+                value={String(session?.user.id_usuario || "")}
+              />
 
               {profileLoading ? <ActivityIndicator color="#0f766e" /> : null}
-              {profileError ? <Text style={styles.warning}>{profileError}</Text> : null}
+              {profileError ? (
+                <Text style={styles.warning}>{profileError}</Text>
+              ) : null}
             </View>
           ) : null}
 
           {activeTab === "establecimientos" ? (
             <View style={styles.panel}>
-              {establecimientosLoading ? <ActivityIndicator color="#0f766e" /> : null}
+              {establecimientosLoading ? (
+                <ActivityIndicator color="#0f766e" />
+              ) : null}
 
               {establecimientosError ? (
                 <Text style={styles.warning}>{establecimientosError}</Text>
               ) : null}
 
-              {!establecimientosLoading && !establecimientosError && establecimientos.length === 0 ? (
-                <Text style={styles.emptyText}>No hay establecimientos FIC para mostrar.</Text>
+              {!establecimientosLoading &&
+              !establecimientosError &&
+              establecimientos.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  No hay establecimientos FIC para mostrar.
+                </Text>
               ) : null}
 
               {establecimientos.map((item, index) => (
                 <View
                   key={`${item.id_establecimiento || item.dsc_establecimiento}-${index}`}
-                  style={styles.establecimientoItem}>
+                  style={styles.establecimientoItem}
+                >
                   <Text style={styles.establecimientoTitle}>
                     {item.dsc_establecimiento || "Establecimiento"}
                   </Text>
@@ -607,10 +890,17 @@ export default function ClienteScreen() {
                     onPress={() => openMapsForEstablecimiento(item)}
                     style={({ pressed }) => [
                       styles.mapButton,
-                      (!item.ubicacion && !item.direccion) && styles.mapButtonDisabled,
+                      !item.ubicacion &&
+                        !item.direccion &&
+                        styles.mapButtonDisabled,
                       pressed && styles.pressed,
-                    ]}>
-                    <IconSymbol color="#fff8e8" name="location.fill" size={20} />
+                    ]}
+                  >
+                    <IconSymbol
+                      color="#fff8e8"
+                      name="location.fill"
+                      size={20}
+                    />
                     <Text style={styles.mapButtonText}>Abrir mapa</Text>
                   </Pressable>
                 </View>
@@ -623,6 +913,221 @@ export default function ClienteScreen() {
               <InfoRow label="Usuario" value={session?.user.usuario} />
               <InfoRow label="Perfil" value="Cliente (3)" />
               <InfoRow label="NIP" value={profile?.nip || session?.user.nip} />
+
+              <View style={styles.activationBox}>
+                <Pressable
+                  disabled={activationLoading}
+                  onPress={handleStartActivation}
+                  style={({ pressed }) => [
+                    styles.activationButton,
+                    pressed && styles.pressed,
+                    activationLoading && styles.mapButtonDisabled,
+                  ]}
+                >
+                  <IconSymbol
+                    color="#fff8e8"
+                    name="qrcode.viewfinder"
+                    size={20}
+                  />
+                  <Text style={styles.activationButtonText}>Activar QR</Text>
+                </Pressable>
+
+                {activationStep === "front" || activationStep === "back" ? (
+                  <View style={styles.activationCameraPanel}>
+                    <View style={styles.activationProgressRow}>
+                      <View style={[styles.activationStepPill, styles.activationStepPillActive]}>
+                        <Text style={styles.activationStepPillText}>1 Frente</Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.activationStepPill,
+                          activationStep === "back" && styles.activationStepPillActive,
+                        ]}
+                      >
+                        <Text style={styles.activationStepPillText}>2 Reverso</Text>
+                      </View>
+                      <View style={styles.activationStepPill}>
+                        <Text style={styles.activationStepPillText}>3 Firma</Text>
+                      </View>
+                    </View>
+                    <Text style={styles.activationTitle}>
+                      {activationStep === "front"
+                        ? "Coloca el frente de tu INE dentro del rectangulo"
+                        : "Ahora coloca el reverso de tu INE dentro del rectangulo"}
+                    </Text>
+                    <View style={styles.activationCameraShell}>
+                      <CameraView
+                        ref={cameraRef}
+                        active
+                        animateShutter
+                        facing="back"
+                        style={styles.activationCamera}
+                      />
+                      <View pointerEvents="none" style={styles.ineOverlay}>
+                        <View style={styles.ineGuideCard}>
+                          <View style={styles.ineGuideTopRow}>
+                            <Text style={styles.ineGuideTitle}>INE</Text>
+                            <Text style={styles.ineGuideSide}>
+                              {activationStep === "front" ? "FRENTE" : "REVERSO"}
+                            </Text>
+                          </View>
+                          <View style={styles.ineGuidePhoto} />
+                          <View style={styles.ineGuideLines}>
+                            <View style={styles.ineGuideLineLong} />
+                            <View style={styles.ineGuideLineShort} />
+                          </View>
+                        </View>
+                        <Text style={styles.ineGuideHint}>
+                          Alinea la credencial completa, sin cortar esquinas
+                        </Text>
+                      </View>
+                      {activationCaptureHint ? (
+                        <View style={styles.activationNextOverlay}>
+                          <Text style={styles.activationNextText}>
+                            {activationCaptureHint}
+                          </Text>
+                        </View>
+                      ) : null}
+                    </View>
+                    <View style={styles.activationActions}>
+                      <Pressable
+                        onPress={resetActivation}
+                        style={styles.activationSecondaryButton}
+                      >
+                        <Text style={styles.activationSecondaryButtonText}>
+                          Cancelar
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={handleCaptureIne}
+                        style={styles.activationPrimaryButton}
+                      >
+                        <Text style={styles.activationPrimaryButtonText}>
+                          {activationStep === "front"
+                            ? "Tomar frente"
+                            : "Tomar reverso"}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+
+                {activationStep === "signature" ? (
+                  <View style={styles.signaturePanel}>
+                    <Text style={styles.activationTitle}>
+                      Firma con tu dedo
+                    </Text>
+                    {activationCaptureHint ? (
+                      <View style={styles.activationNextBanner}>
+                        <Text style={styles.activationNextBannerText}>
+                          {activationCaptureHint}
+                        </Text>
+                      </View>
+                    ) : null}
+                    <View style={styles.signatureBox}>
+                      <SignatureScreen
+                        ref={signatureRef}
+                        autoClear={false}
+                        backgroundColor="#fff8e8"
+                        clearText="Limpiar"
+                        confirmText="Guardar"
+                        descriptionText=""
+                        imageType="image/png"
+                        maxWidth={3.2}
+                        minWidth={1.2}
+                        onBegin={() => {
+                          setSignatureScrollLocked(true);
+                          setActivationError("");
+                        }}
+                        onEmpty={() => {
+                          signatureSubmitPendingRef.current = false;
+                          setSignatureScrollLocked(false);
+                          setActivationLoading(false);
+                          setSignatureImage("");
+                          setActivationError("Firma con tu dedo antes de guardar la activacion.");
+                        }}
+                        onEnd={() => {
+                          setSignatureScrollLocked(false);
+                          signatureRef.current?.readSignature();
+                        }}
+                        onError={(signatureError) => {
+                          signatureSubmitPendingRef.current = false;
+                          setSignatureScrollLocked(false);
+                          setActivationLoading(false);
+                          setActivationError(
+                            signatureError instanceof Error
+                              ? signatureError.message
+                              : "No se pudo abrir el panel de firma.",
+                          );
+                        }}
+                        onOK={(signature) => {
+                          setSignatureScrollLocked(false);
+                          setSignatureImage(signature);
+                          if (signatureSubmitPendingRef.current) {
+                            signatureSubmitPendingRef.current = false;
+                            void saveActivationWithSignature(signature);
+                          }
+                        }}
+                        penColor="#24160f"
+                        scrollable={false}
+                        style={styles.signatureCanvas}
+                        webStyle={signatureCanvasWebStyle}
+                        webviewProps={{
+                          androidLayerType: "hardware",
+                          cacheEnabled: true,
+                          nestedScrollEnabled: false,
+                          overScrollMode: "never",
+                          scrollEnabled: false,
+                        }}
+                      />
+                    </View>
+                    <View style={styles.activationActions}>
+                      <Pressable
+                        onPress={() => {
+                          setSignatureScrollLocked(false);
+                          setSignatureImage("");
+                          signatureRef.current?.clearSignature();
+                        }}
+                        style={styles.activationSecondaryButton}
+                      >
+                        <Text style={styles.activationSecondaryButtonText}>
+                          Limpiar firma
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        disabled={
+                          activationLoading || !signatureImage
+                        }
+                        onPress={handleSubmitActivation}
+                        style={({ pressed }) => [
+                          styles.activationPrimaryButton,
+                          (pressed ||
+                            activationLoading ||
+                            !signatureImage) &&
+                            styles.mapButtonDisabled,
+                        ]}
+                      >
+                        {activationLoading ? (
+                          <ActivityIndicator color="#fff8e8" />
+                        ) : (
+                          <Text style={styles.activationPrimaryButtonText}>
+                            Guardar activacion
+                          </Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : null}
+
+                {activationError ? (
+                  <Text style={styles.warning}>{activationError}</Text>
+                ) : null}
+                {activationMessage ? (
+                  <Text style={styles.activationMessage}>
+                    {activationMessage}
+                  </Text>
+                ) : null}
+              </View>
 
               <Pressable onPress={handleLogout} style={styles.secondaryButton}>
                 <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
@@ -955,6 +1460,222 @@ const styles = StyleSheet.create({
     color: "#fff8e8",
     fontSize: 14,
     fontWeight: "800",
+  },
+  activationBox: {
+    backgroundColor: "#f9efd9",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 12,
+    padding: 14,
+  },
+  activationButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#15803d",
+    borderColor: "#166534",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 8,
+    minHeight: 46,
+    paddingHorizontal: 16,
+  },
+  activationButtonText: {
+    color: "#fff8e8",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  activationCameraPanel: {
+    gap: 12,
+  },
+  activationTitle: {
+    color: "#24160f",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  activationProgressRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  activationStepPill: {
+    backgroundColor: "#6f5639",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 32,
+    justifyContent: "center",
+    paddingHorizontal: 10,
+  },
+  activationStepPillActive: {
+    backgroundColor: "#8f1d2c",
+  },
+  activationStepPillText: {
+    color: "#fff8e8",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  activationCameraShell: {
+    backgroundColor: "#24160f",
+    borderColor: "#3b2619",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 390,
+    overflow: "hidden",
+    position: "relative",
+  },
+  activationCamera: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  ineOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 18,
+  },
+  ineGuideCard: {
+    aspectRatio: 1.58,
+    borderColor: "#fff8e8",
+    borderRadius: 8,
+    borderStyle: "dashed",
+    borderWidth: 3,
+    justifyContent: "space-between",
+    maxWidth: 360,
+    padding: 14,
+    width: "88%",
+  },
+  ineGuideTopRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  ineGuideTitle: {
+    color: "#fff8e8",
+    fontSize: 26,
+    fontWeight: "900",
+  },
+  ineGuideSide: {
+    color: "#d5a84f",
+    fontSize: 12,
+    fontWeight: "900",
+  },
+  ineGuidePhoto: {
+    backgroundColor: "rgba(255, 248, 232, 0.25)",
+    borderColor: "rgba(255, 248, 232, 0.75)",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: "38%",
+    width: "28%",
+  },
+  ineGuideLines: {
+    gap: 7,
+  },
+  ineGuideLineLong: {
+    backgroundColor: "rgba(255, 248, 232, 0.75)",
+    borderRadius: 8,
+    height: 7,
+    width: "64%",
+  },
+  ineGuideLineShort: {
+    backgroundColor: "rgba(255, 248, 232, 0.55)",
+    borderRadius: 8,
+    height: 7,
+    width: "46%",
+  },
+  ineGuideHint: {
+    backgroundColor: "rgba(36, 22, 15, 0.82)",
+    borderRadius: 8,
+    color: "#fff8e8",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    textAlign: "center",
+  },
+  activationNextOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    backgroundColor: "rgba(21, 128, 61, 0.74)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  activationNextText: {
+    color: "#fff8e8",
+    fontSize: 20,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  activationNextBanner: {
+    backgroundColor: "#15803d",
+    borderColor: "#166534",
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  activationNextBannerText: {
+    color: "#fff8e8",
+    fontSize: 14,
+    fontWeight: "900",
+    textAlign: "center",
+  },
+  activationActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  activationPrimaryButton: {
+    alignItems: "center",
+    backgroundColor: "#8f1d2c",
+    borderColor: "#6f141f",
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 14,
+  },
+  activationPrimaryButtonText: {
+    color: "#fff8e8",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  activationSecondaryButton: {
+    alignItems: "center",
+    backgroundColor: "#fff8e8",
+    borderColor: "#8f1d2c",
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 14,
+  },
+  activationSecondaryButtonText: {
+    color: "#8f1d2c",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  signaturePanel: {
+    gap: 12,
+  },
+  signatureBox: {
+    backgroundColor: "#fff8e8",
+    borderColor: "#3b2619",
+    borderRadius: 8,
+    borderWidth: 1,
+    height: 260,
+    overflow: "hidden",
+  },
+  signatureCanvas: {
+    height: 260,
+    width: "100%",
+  },
+  activationMessage: {
+    color: "#15803d",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 20,
   },
   secondaryButton: {
     alignItems: "center",

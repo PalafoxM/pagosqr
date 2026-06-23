@@ -12,6 +12,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.agustinmarin.pagosfic",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -50,7 +51,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Permitir que Pagos FIC use la camara para escanear codigos QR.",
+          "cameraPermission": "Permitir que Pagos FIC use la camara para fotografiar la credencial y escanear codigos QR.",
           "recordAudioAndroid": false
         }
       ]

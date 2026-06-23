@@ -28,6 +28,12 @@ export type ClienteQrAccess = {
   expires_at: string | null;
 };
 
+export type ActivateQrPayload = {
+  ine_frontal: string;
+  ine_trasera: string;
+  firma: string;
+};
+
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {
     throw new Error("No esta configurado EXPO_PUBLIC_API_BASE_URL.");
@@ -45,7 +51,20 @@ const getNumber = (value: unknown) => {
 };
 
 const normalizeRow = (payload: unknown) =>
-  payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  payload && typeof payload === "object"
+    ? (payload as Record<string, unknown>)
+    : {};
+
+const readApiError = async (response: Response, fallback: string) => {
+  const text = await response.text();
+
+  try {
+    const result = JSON.parse(text) as ApiListResponse;
+    return result.respuesta || fallback;
+  } catch {
+    return text || fallback;
+  }
+};
 
 async function fetchRows(
   table: string,
@@ -69,7 +88,7 @@ async function fetchRows(
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(await readApiError(response, `HTTP ${response.status}`));
   }
 
   const result = (await response.json()) as ApiListResponse;
@@ -92,7 +111,7 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(await readApiError(response, `HTTP ${response.status}`));
   }
 
   const result = (await response.json()) as ApiListResponse;
@@ -104,14 +123,18 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
   return result.data?.[0] as T;
 }
 
-export const getFallbackClienteProfile = (session: AuthSession): ClienteProfile => ({
+export const getFallbackClienteProfile = (
+  session: AuthSession,
+): ClienteProfile => ({
   nombre_completo: session.user.nombre,
   nip: session.user.nip,
   monto_deposito: session.user.monto_deposito,
   qr: session.user.qr,
 });
 
-export async function getClienteProfile(session: AuthSession): Promise<ClienteProfile> {
+export async function getClienteProfile(
+  session: AuthSession,
+): Promise<ClienteProfile> {
   const rows = await fetchRows(
     "vw_usuario",
     { id_usuario: session.user.id_usuario, id_perfil: 3 },
@@ -121,7 +144,9 @@ export async function getClienteProfile(session: AuthSession): Promise<ClientePr
 
   return {
     nombre_completo:
-      getString(row.nombre_completo) || getString(row.nombre) || session.user.nombre,
+      getString(row.nombre_completo) ||
+      getString(row.nombre) ||
+      session.user.nombre,
     nip: getString(row.nip) || session.user.nip,
     monto_deposito:
       getString(row.monto_deposito) ||
@@ -131,8 +156,14 @@ export async function getClienteProfile(session: AuthSession): Promise<ClientePr
   };
 }
 
-export async function getEstablecimientosFic(token: string): Promise<EstablecimientoFic[]> {
-  const rows = await fetchRows("establecimiento", { id_tipo: 1, visible: 1 }, token);
+export async function getEstablecimientosFic(
+  token: string,
+): Promise<EstablecimientoFic[]> {
+  const rows = await fetchRows(
+    "establecimiento",
+    { id_tipo: 1, visible: 1 },
+    token,
+  );
 
   return rows.map((row) => ({
     id_establecimiento: getNumber(row.id_establecimiento ?? row.id),
@@ -142,6 +173,35 @@ export async function getEstablecimientosFic(token: string): Promise<Establecimi
   }));
 }
 
-export async function getClienteQrAccess(token: string): Promise<ClienteQrAccess> {
+export async function getClienteQrAccess(
+  token: string,
+): Promise<ClienteQrAccess> {
   return fetchAuthenticated<ClienteQrAccess>("/cliente/qr-url", token);
+}
+
+export async function activateClienteQr(
+  token: string,
+  payload: ActivateQrPayload,
+) {
+  const response = await fetch(`${getApiBaseUrl()}/cliente/activar-qr`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "X-API-Token": token,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await readApiError(response, `HTTP ${response.status}`));
+  }
+
+  const result = (await response.json()) as ApiListResponse;
+
+  if (result.error) {
+    throw new Error(result.respuesta || "No se pudo guardar la activacion QR.");
+  }
+
+  return result.data;
 }
