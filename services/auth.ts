@@ -8,6 +8,7 @@ const ALLOWED_PROFILE_IDS = new Set([2, 3]);
 export type AuthUser = {
   id_usuario: number;
   id_perfil: number;
+  id_tipo_proveedor: number;
   usuario: string;
   nombre: string;
   id_establecimiento: number;
@@ -62,6 +63,7 @@ const normalizeUser = (payload: unknown): AuthUser => {
   return {
     id_usuario,
     id_perfil,
+    id_tipo_proveedor: getNumber(row.id_tipo_proveedor),
     usuario: getString(row.usuario),
     nombre,
     id_establecimiento: getNumber(row.id_establecimiento),
@@ -135,6 +137,7 @@ export async function saveSession(session: AuthSession) {
   const user: StoredAuthUser = {
     id_usuario: session.user.id_usuario,
     id_perfil: session.user.id_perfil,
+    id_tipo_proveedor: session.user.id_tipo_proveedor,
     usuario: session.user.usuario,
     nombre: session.user.nombre,
     id_establecimiento: session.user.id_establecimiento,
@@ -165,7 +168,14 @@ export async function getStoredSession(): Promise<AuthSession | null> {
       return null;
     }
 
-    return { token, user: { ...user, api_token: token } };
+    return {
+      token,
+      user: {
+        ...user,
+        id_tipo_proveedor: getNumber(user.id_tipo_proveedor),
+        api_token: token,
+      },
+    };
   } catch {
     await clearSession();
     return null;
@@ -179,8 +189,12 @@ export async function clearSession() {
   ]);
 }
 
-export function getHomePathForProfile(profileId: number) {
+export function getHomePathForProfile(profileId: number, providerTypeId = 0) {
   if (profileId === 2) {
+    if (providerTypeId === 2 || providerTypeId === 3) {
+      return "/hotel";
+    }
+
     return "/proveedor";
   }
 

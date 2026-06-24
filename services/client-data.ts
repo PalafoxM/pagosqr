@@ -5,7 +5,7 @@ const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 type ApiListResponse = {
   error?: boolean;
   respuesta?: string;
-  data?: unknown[];
+  data?: unknown[] | unknown;
 };
 
 export type ClienteProfile = {
@@ -50,6 +50,10 @@ const getNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const logSaldo = (message: string, details?: Record<string, unknown>) => {
+  console.log(`[cliente:saldo] ${message}`, details || {});
+};
+
 const normalizeRow = (payload: unknown) =>
   payload && typeof payload === "object"
     ? (payload as Record<string, unknown>)
@@ -71,6 +75,8 @@ async function fetchRows(
   where: Record<string, unknown>,
   token: string,
 ): Promise<Record<string, unknown>[]> {
+  logSaldo("getTabla inicio", { table, where });
+
   const response = await fetch(`${getApiBaseUrl()}/getTabla`, {
     method: "POST",
     headers: {
@@ -88,19 +94,32 @@ async function fetchRows(
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response, `HTTP ${response.status}`));
+    const message = await readApiError(response, `HTTP ${response.status}`);
+    logSaldo("getTabla error http", { table, status: response.status, message });
+    throw new Error(message);
   }
 
   const result = (await response.json()) as ApiListResponse;
 
   if (result.error) {
-    throw new Error(result.respuesta || "La API devolvio un error.");
+    const message = result.respuesta || "La API devolvio un error.";
+    logSaldo("getTabla error api", { table, message });
+    throw new Error(message);
   }
 
-  return (result.data || []).map(normalizeRow);
+  const rows = (Array.isArray(result.data) ? result.data : []).map(normalizeRow);
+  logSaldo("getTabla ok", {
+    table,
+    rows: rows.length,
+    monto_deposito: rows[0]?.monto_deposito,
+  });
+
+  return rows;
 }
 
 async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
+  logSaldo("GET inicio", { path });
+
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     method: "GET",
     headers: {
@@ -111,16 +130,28 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(await readApiError(response, `HTTP ${response.status}`));
+    const message = await readApiError(response, `HTTP ${response.status}`);
+    logSaldo("GET error http", { path, status: response.status, message });
+    throw new Error(message);
   }
 
   const result = (await response.json()) as ApiListResponse;
 
   if (result.error) {
-    throw new Error(result.respuesta || "La API devolvio un error.");
+    const message = result.respuesta || "La API devolvio un error.";
+    logSaldo("GET error api", { path, message });
+    throw new Error(message);
   }
 
-  return result.data?.[0] as T;
+  const data = (Array.isArray(result.data) ? result.data?.[0] : result.data) as T;
+  const row = normalizeRow(data);
+  logSaldo("GET ok", {
+    path,
+    monto_deposito: row.monto_deposito,
+    id_usuario: row.id_usuario,
+  });
+
+  return data;
 }
 
 export const getFallbackClienteProfile = (
@@ -135,14 +166,59 @@ export const getFallbackClienteProfile = (
 export async function getClienteProfile(
   session: AuthSession,
 ): Promise<ClienteProfile> {
-  const rows = await fetchRows(
-    "vw_usuario",
-    { id_usuario: session.user.id_usuario, id_perfil: 3 },
-    session.token,
-  );
-  const row = rows[0] || {};
+  let row: Record<string, unknown> = {};
 
-  return {
+  logSaldo("perfil inicio", {
+    id_usuario: session.user.id_usuario,
+    monto_sesion: session.user.monto_deposito,
+  });
+
+  try {
+    row = normalizeRow(await fetchAuthenticated<unknown>("/cliente/profile", session.token));
+
+    const responseUserId = getNumber(row.id_usuario);
+    if (responseUserId !== session.user.id_usuario) {
+      throw new Error(
+        `Respuesta de /cliente/profile sin id_usuario valido. Recibido: ${responseUserId || "vacio"}`,
+      );
+    }
+
+    logSaldo("perfil via endpoint", {
+      id_usuario: row.id_usuario,
+      monto_deposito: row.monto_deposito,
+    });
+  } catch (endpointError) {
+    logSaldo("perfil endpoint fallo, usando fallback", {
+      error:
+        endpointError instanceof Error
+          ? endpointError.message
+          : String(endpointError),
+    });
+
+    const userRows = await fetchRows(
+      "usuario",
+      { id_usuario: session.user.id_usuario, visible: 1 },
+      session.token,
+    );
+    const profileRows = await fetchRows(
+      "vw_usuario",
+      { id_usuario: session.user.id_usuario, id_perfil: 3 },
+      session.token,
+    );
+
+    row = {
+      ...(profileRows[0] || {}),
+      ...(userRows[0] || {}),
+    };
+
+    logSaldo("perfil fallback combinado", {
+      monto_vw: profileRows[0]?.monto_deposito,
+      monto_usuario: userRows[0]?.monto_deposito,
+      monto_final: row.monto_deposito,
+    });
+  }
+
+  const profile = {
     nombre_completo:
       getString(row.nombre_completo) ||
       getString(row.nombre) ||
@@ -154,6 +230,13 @@ export async function getClienteProfile(
       session.user.monto_deposito,
     qr: getString(row.qr) || getString(row.codigo_qr) || session.user.qr,
   };
+
+  logSaldo("perfil final", {
+    id_usuario: session.user.id_usuario,
+    monto_deposito: profile.monto_deposito,
+  });
+
+  return profile;
 }
 
 export async function getEstablecimientosFic(

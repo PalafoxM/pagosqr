@@ -34,8 +34,10 @@ import {
 import {
   approvePaymentRequest,
   getPaymentRequestNotifications,
+  observeBalanceUpdates,
   observePaymentRequests,
   PaymentRequestNotification,
+  registerPushToken,
   rejectPaymentRequest,
   shouldUseInAppPaymentPolling,
 } from "@/services/notifications";
@@ -56,6 +58,24 @@ const formatPaymentTotal = (value: unknown) =>
   `$${Number(value || 0).toFixed(2)}`;
 
 const formatBalance = (value: unknown) => Number(value || 0).toFixed(2);
+
+const logClienteSaldo = (message: string, details?: Record<string, unknown>) => {
+  console.log(`[cliente:saldo] ${message}`, details || {});
+};
+
+const mergeSessionWithProfile = (
+  currentSession: AuthSession,
+  nextProfile: ClienteProfile,
+): AuthSession => ({
+  ...currentSession,
+  user: {
+    ...currentSession.user,
+    nombre: nextProfile.nombre_completo || currentSession.user.nombre,
+    nip: nextProfile.nip || currentSession.user.nip,
+    monto_deposito: nextProfile.monto_deposito,
+    qr: nextProfile.qr || currentSession.user.qr,
+  },
+});
 
 const signatureCanvasWebStyle = `
   .m-signature-pad {
@@ -166,9 +186,15 @@ export default function ClienteScreen() {
   const signatureRef = useRef<SignatureViewRef | null>(null);
   const signatureSubmitPendingRef = useRef(false);
   const sessionRef = useRef<AuthSession | null>(null);
+  const profileRef = useRef<ClienteProfile | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
   const promptedPaymentRef = useRef<string | number | null>(null);
   const handledPaymentRequestsRef = useRef(new Set<string>());
+  const profileRequestIdRef = useRef(0);
+  const profileRefreshInFlightRef = useRef(false);
+  const registeredPushTokenForSessionRef = useRef("");
+  const sessionToken = session?.token || "";
+  const sessionUserId = session?.user.id_usuario || 0;
 
   useEffect(() => {
     let mounted = true;
@@ -201,7 +227,29 @@ export default function ClienteScreen() {
 
   useEffect(() => {
     sessionRef.current = session;
+    logClienteSaldo("session state actualizado", {
+      id_usuario: session?.user.id_usuario,
+      monto_sesion: session?.user.monto_deposito,
+    });
   }, [session]);
+
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
+
+  useEffect(() => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || registeredPushTokenForSessionRef.current === sessionToken) {
+      return;
+    }
+
+    registeredPushTokenForSessionRef.current = sessionToken;
+    registerPushToken(activeSession.token).catch((pushError) => {
+      console.warn("No se pudo registrar push token.", pushError);
+      registeredPushTokenForSessionRef.current = "";
+    });
+  }, [sessionToken, sessionUserId]);
 
   useEffect(() => {
     paymentRequestRef.current = paymentRequest;
@@ -221,8 +269,16 @@ export default function ClienteScreen() {
         return;
       }
 
+      logClienteSaldo("sesion almacenada cargada", {
+        id_usuario: storedSession.user.id_usuario,
+        monto_sesion: storedSession.user.monto_deposito,
+      });
+
       setSession(storedSession);
-      setProfile(getFallbackClienteProfile(storedSession));
+      setProfile({
+        ...getFallbackClienteProfile(storedSession),
+        monto_deposito: "",
+      });
       setCheckingSession(false);
     });
 
@@ -232,22 +288,37 @@ export default function ClienteScreen() {
   }, []);
 
   useEffect(() => {
-    if (!session) {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || !sessionToken || !sessionUserId) {
       return;
     }
 
     let mounted = true;
+    const requestId = ++profileRequestIdRef.current;
     setProfileLoading(true);
     setProfileError("");
+    logClienteSaldo("consulta inicial perfil", {
+      requestId,
+      id_usuario: activeSession.user.id_usuario,
+    });
 
-    getClienteProfile(session)
+    getClienteProfile(activeSession)
       .then((nextProfile) => {
-        if (mounted) {
+        if (mounted && requestId === profileRequestIdRef.current) {
+          const nextSession = mergeSessionWithProfile(activeSession, nextProfile);
+          logClienteSaldo("consulta inicial perfil aplicada", {
+            requestId,
+            monto_deposito: nextProfile.monto_deposito,
+          });
           setProfile(nextProfile);
+          setSession(nextSession);
+          sessionRef.current = nextSession;
+          void saveSession(nextSession);
         }
       })
       .catch((error) => {
-        if (mounted) {
+        if (mounted && requestId === profileRequestIdRef.current) {
           setProfileError(
             error instanceof Error
               ? error.message
@@ -256,7 +327,7 @@ export default function ClienteScreen() {
         }
       })
       .finally(() => {
-        if (mounted) {
+        if (mounted && requestId === profileRequestIdRef.current) {
           setProfileLoading(false);
         }
       });
@@ -264,39 +335,10 @@ export default function ClienteScreen() {
     return () => {
       mounted = false;
     };
-  }, [session]);
+  }, [sessionToken, sessionUserId]);
 
   useEffect(() => {
-    if (!session) {
-      return;
-    }
-
-    let mounted = true;
-
-    const refreshVisibleBalance = async () => {
-      try {
-        const nextProfile = await getClienteProfile(session);
-
-        if (mounted) {
-          setProfile(nextProfile);
-        }
-      } catch (refreshError) {
-        console.warn(
-          "No se pudo refrescar el saldo del cliente.",
-          refreshError,
-        );
-      }
-    };
-
-    const intervalId = setInterval(refreshVisibleBalance, 5000);
-
-    return () => {
-      mounted = false;
-      clearInterval(intervalId);
-    };
-  }, [session]);
-  useEffect(() => {
-    if (!session) {
+    if (!sessionToken) {
       return;
     }
 
@@ -304,7 +346,7 @@ export default function ClienteScreen() {
     setEstablecimientosLoading(true);
     setEstablecimientosError("");
 
-    getEstablecimientosFic(session.token)
+    getEstablecimientosFic(sessionToken)
       .then((items) => {
         if (mounted) {
           setEstablecimientos(items);
@@ -328,7 +370,7 @@ export default function ClienteScreen() {
     return () => {
       mounted = false;
     };
-  }, [session]);
+  }, [sessionToken]);
 
   const resetActivation = useCallback(() => {
     setActivationStep("idle");
@@ -458,58 +500,79 @@ export default function ClienteScreen() {
 
   const refreshClienteProfile = useCallback(
     async (activeSession: AuthSession) => {
-      const nextProfile = await getClienteProfile(activeSession);
-      setProfile(nextProfile);
+      if (profileRefreshInFlightRef.current) {
+        logClienteSaldo("refresh manual esperando consulta previa", {
+          id_usuario: activeSession.user.id_usuario,
+        });
+      }
 
-      const nextSession = {
-        ...activeSession,
-        user: {
-          ...activeSession.user,
-          nombre: nextProfile.nombre_completo || activeSession.user.nombre,
-          nip: nextProfile.nip || activeSession.user.nip,
+      profileRefreshInFlightRef.current = true;
+      const requestId = ++profileRequestIdRef.current;
+      logClienteSaldo("refresh manual inicio", {
+        requestId,
+        id_usuario: activeSession.user.id_usuario,
+        monto_sesion: activeSession.user.monto_deposito,
+      });
+
+      try {
+        const nextProfile = await getClienteProfile(activeSession);
+
+        if (requestId !== profileRequestIdRef.current) {
+          logClienteSaldo("refresh manual descartado por respuesta vieja", {
+            requestId,
+            currentRequestId: profileRequestIdRef.current,
+            monto_deposito: nextProfile.monto_deposito,
+          });
+          return;
+        }
+
+        logClienteSaldo("refresh manual aplicado", {
+          requestId,
           monto_deposito: nextProfile.monto_deposito,
-          qr: nextProfile.qr || activeSession.user.qr,
-        },
-      };
+        });
+        setProfile(nextProfile);
 
+        const nextSession = mergeSessionWithProfile(activeSession, nextProfile);
+
+        setSession(nextSession);
+        sessionRef.current = nextSession;
+        await saveSession(nextSession);
+      } finally {
+        profileRefreshInFlightRef.current = false;
+      }
+    },
+    [],
+  );
+
+  const applyBalanceUpdate = useCallback(
+    async (balance: unknown, reason: string) => {
+      const activeSession = sessionRef.current;
+
+      if (!activeSession) {
+        return;
+      }
+
+      const montoDeposito = formatBalance(balance);
+      logClienteSaldo("saldo actualizado por notificacion", {
+        reason,
+        monto_deposito: montoDeposito,
+      });
+
+      const currentProfile = profileRef.current;
+      const nextProfile = currentProfile
+        ? { ...currentProfile, monto_deposito: montoDeposito }
+        : {
+            ...getFallbackClienteProfile(activeSession),
+            monto_deposito: montoDeposito,
+          };
+      const nextSession = mergeSessionWithProfile(activeSession, nextProfile);
+
+      setProfile(nextProfile);
       setSession(nextSession);
       sessionRef.current = nextSession;
       await saveSession(nextSession);
     },
     [],
-  );
-
-  const applyApprovedBalance = useCallback(
-    async (activeSession: AuthSession, balance: unknown) => {
-      const montoDeposito = formatBalance(balance);
-      const nextSession = {
-        ...activeSession,
-        user: {
-          ...activeSession.user,
-          monto_deposito: montoDeposito,
-        },
-      };
-
-      setProfile((currentProfile) =>
-        currentProfile
-          ? { ...currentProfile, monto_deposito: montoDeposito }
-          : currentProfile,
-      );
-      setSession(nextSession);
-      sessionRef.current = nextSession;
-      await saveSession(nextSession);
-
-      try {
-        await refreshClienteProfile(nextSession);
-      } catch (refreshError) {
-        setProfileError(
-          refreshError instanceof Error
-            ? refreshError.message
-            : "No se pudo refrescar el saldo del cliente.",
-        );
-      }
-    },
-    [refreshClienteProfile],
   );
 
   const handlePaymentAction = useCallback(
@@ -528,19 +591,18 @@ export default function ClienteScreen() {
 
       try {
         if (action === "approve") {
-          const approval = await approvePaymentRequest(
+          logClienteSaldo("aprobando pago", {
+            transactionId: request.transactionId,
+            monto_actual_en_sesion: activeSession.user.monto_deposito,
+          });
+          await approvePaymentRequest(
             activeSession.token,
             request.transactionId,
           );
-
-          if (
-            approval.current_balance !== undefined &&
-            approval.current_balance !== null
-          ) {
-            await applyApprovedBalance(activeSession, approval.current_balance);
-          } else {
-            await refreshClienteProfile(activeSession);
-          }
+          logClienteSaldo("pago aprobado, consultando saldo real", {
+            transactionId: request.transactionId,
+          });
+          await refreshClienteProfile(sessionRef.current || activeSession);
 
           persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago aprobado correctamente.");
@@ -564,7 +626,7 @@ export default function ClienteScreen() {
         setPaymentActionLoading(null);
       }
     },
-    [applyApprovedBalance, persistHandledPaymentRequest, refreshClienteProfile],
+    [persistHandledPaymentRequest, refreshClienteProfile],
   );
 
   const showPaymentRequestPrompt = useCallback(
@@ -634,6 +696,19 @@ export default function ClienteScreen() {
   }, [showPaymentRequestPrompt]);
 
   useEffect(() => {
+    return observeBalanceUpdates((balanceUpdate, source) => {
+      if (
+        balanceUpdate.current_balance === undefined ||
+        balanceUpdate.current_balance === null
+      ) {
+        return;
+      }
+
+      void applyBalanceUpdate(balanceUpdate.current_balance, source);
+    });
+  }, [applyBalanceUpdate]);
+
+  useEffect(() => {
     if (
       !session ||
       !handledPaymentRequestsLoaded ||
@@ -687,6 +762,10 @@ export default function ClienteScreen() {
       id_perfil: session.user.id_perfil,
     });
   }, [profile?.nombre_completo, session]);
+  const displayedBalance =
+    profile?.monto_deposito !== undefined && profile.monto_deposito !== ""
+      ? profile.monto_deposito
+      : null;
 
   return (
     <ScrollView
@@ -815,10 +894,9 @@ export default function ClienteScreen() {
               <View style={styles.balancePanel}>
                 <Text style={styles.balanceLabel}>Saldo disponible</Text>
                 <Text style={styles.balanceValue}>
-                  $
-                  {formatBalance(
-                    profile?.monto_deposito || session?.user.monto_deposito,
-                  )}
+                  {displayedBalance === null
+                    ? "Consultando..."
+                    : `$${formatBalance(displayedBalance)}`}
                 </Text>
               </View>
 

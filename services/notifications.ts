@@ -12,6 +12,13 @@ export type PaymentRequestNotification = {
   status?: string;
 };
 
+export type BalanceUpdateNotification = {
+  type?: string;
+  transactionId?: number | string;
+  current_balance?: number | string;
+  paymentMethod?: string;
+};
+
 export type NotificationInteractionSource = "received" | "response";
 
 export type PaymentApprovalResponse = {
@@ -46,6 +53,18 @@ export const isPaymentRequestNotification = (
   const payload = data && typeof data === "object" ? (data as PaymentRequestNotification) : {};
 
   return payload.type === "PAYMENT_REQUEST" && Boolean(payload.transactionId);
+};
+
+export const isBalanceUpdateNotification = (
+  data: unknown,
+): data is BalanceUpdateNotification => {
+  const payload = data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
+
+  return (
+    (payload.type === "PAYMENT_COMPLETED" ||
+      payload.type === "BALANCE_UPDATED") &&
+    Boolean(payload.transactionId)
+  );
 };
 
 async function postAuthenticated<T>(
@@ -92,6 +111,15 @@ export async function getPaymentRequestNotifications(_token: string) {
 export function observePaymentRequests(
   _onPaymentRequest: (
     paymentRequest: PaymentRequestNotification,
+    source: NotificationInteractionSource,
+  ) => void,
+) {
+  return () => {};
+}
+
+export function observeBalanceUpdates(
+  _onBalanceUpdate: (
+    balanceUpdate: BalanceUpdateNotification,
     source: NotificationInteractionSource,
   ) => void,
 ) {

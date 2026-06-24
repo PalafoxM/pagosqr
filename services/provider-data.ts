@@ -29,6 +29,8 @@ export type ChargeResult = {
   tip?: number;
   total?: number;
   payment_id?: number;
+  current_balance?: number | string;
+  client_user_id?: number | string;
   requiresNip?: boolean;
   supportsStatusPolling?: boolean;
   push_delivery?: {

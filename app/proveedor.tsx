@@ -13,6 +13,7 @@ import {
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
+import { registerPushToken } from "@/services/notifications";
 import {
   ChargeResult,
   createProviderCharge,
@@ -85,6 +86,14 @@ export default function ProveedorScreen() {
         return;
       }
 
+      if (
+        storedSession.user.id_tipo_proveedor === 2 ||
+        storedSession.user.id_tipo_proveedor === 3
+      ) {
+        router.replace("/hotel" as never);
+        return;
+      }
+
       setSession(storedSession);
       setSelectedEstablecimientoId(storedSession.user.id_establecimiento || 0);
       setCheckingSession(false);
@@ -94,6 +103,16 @@ export default function ProveedorScreen() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    registerPushToken(session.token).catch((pushError) => {
+      console.warn("No se pudo registrar push token.", pushError);
+    });
+  }, [session]);
 
   useEffect(() => {
     if (!session) {

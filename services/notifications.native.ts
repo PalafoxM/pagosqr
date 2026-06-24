@@ -15,6 +15,13 @@ export type PaymentRequestNotification = {
   status?: string;
 };
 
+export type BalanceUpdateNotification = {
+  type?: string;
+  transactionId?: number | string;
+  current_balance?: number | string;
+  paymentMethod?: string;
+};
+
 export type NotificationInteractionSource = "received" | "response";
 
 export type PaymentApprovalResponse = {
@@ -54,7 +61,6 @@ type NotificationPayload = {
 
 const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
 let notificationHandlerConfigured = false;
-let lastHandledNotificationResponseKey = "";
 let expoGoAndroidWarningShown = false;
 
 const getExpoProjectId = () =>
@@ -108,15 +114,28 @@ export const isPaymentRequestNotification = (
   return payload.type === "PAYMENT_REQUEST" && Boolean(payload.transactionId);
 };
 
+export const isBalanceUpdateNotification = (
+  data: unknown,
+): data is BalanceUpdateNotification => {
+  const payload = data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
+
+  return (
+    (payload.type === "PAYMENT_COMPLETED" ||
+      payload.type === "BALANCE_UPDATED") &&
+    Boolean(payload.transactionId)
+  );
+};
+
 const getNotificationResponseKey = (notification: NotificationPayload) => {
   const data = notification.request.content.data;
-  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification) : {};
+  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification & BalanceUpdateNotification) : {};
 
   return [
     payload.type || "",
     payload.transactionId || "",
     payload.total || "",
     payload.vendorId || "",
+    payload.current_balance || "",
   ].join(":");
 };
 
@@ -282,7 +301,7 @@ export async function registerPushToken(token: string) {
 
 export const registerDeviceForPushNotifications = registerPushToken;
 
-export const shouldUseInAppPaymentPolling = () => Platform.OS === "android";
+export const shouldUseInAppPaymentPolling = () => __DEV__ && isExpoGoAndroid;
 
 export async function getPaymentRequestNotifications(token: string) {
   const rows = await getAuthenticated<NotificationRow[]>("/notifications/my-notifications", token);
@@ -301,6 +320,7 @@ export function observePaymentRequests(
   console.log("[notifications] observePaymentRequests iniciado");
   let cleanup = () => {};
   let disposed = false;
+  let lastHandledResponseKey = "";
 
   const showPaymentRequest = (
     notification: NotificationPayload,
@@ -324,12 +344,12 @@ export function observePaymentRequests(
         if (response?.notification) {
           const responseKey = getNotificationResponseKey(response.notification);
 
-          if (responseKey && responseKey === lastHandledNotificationResponseKey) {
+          if (responseKey && responseKey === lastHandledResponseKey) {
             console.log("[notifications] ultima respuesta ya procesada", response.notification.request.content.data);
             return;
           }
 
-          lastHandledNotificationResponseKey = responseKey;
+          lastHandledResponseKey = responseKey;
           console.log("[notifications] ultima respuesta de notificacion", response.notification.request.content.data);
           showPaymentRequest(response.notification, "response");
         }
@@ -345,14 +365,95 @@ export function observePaymentRequests(
         (response) => {
           const responseKey = getNotificationResponseKey(response.notification);
 
-          if (responseKey && responseKey === lastHandledNotificationResponseKey) {
+          if (responseKey && responseKey === lastHandledResponseKey) {
             console.log("[notifications] respuesta ya procesada", response.notification.request.content.data);
             return;
           }
 
-          lastHandledNotificationResponseKey = responseKey;
+          lastHandledResponseKey = responseKey;
           console.log("[notifications] listener response", response.notification.request.content.data);
           showPaymentRequest(response.notification, "response");
+        },
+      );
+
+      cleanup = () => {
+        receivedSubscription.remove();
+        responseSubscription.remove();
+      };
+
+      if (disposed) {
+        cleanup();
+      }
+    })
+    .catch(() => {
+      if (!disposed) {
+        cleanup = () => {};
+      }
+    });
+
+  return () => {
+    disposed = true;
+    cleanup();
+  };
+}
+
+export function observeBalanceUpdates(
+  onBalanceUpdate: (
+    balanceUpdate: BalanceUpdateNotification,
+    source: NotificationInteractionSource,
+  ) => void,
+) {
+  console.log("[notifications] observeBalanceUpdates iniciado");
+  let cleanup = () => {};
+  let disposed = false;
+  let lastHandledResponseKey = "";
+
+  const showBalanceUpdate = (
+    notification: NotificationPayload,
+    source: NotificationInteractionSource,
+  ) => {
+    const data = notification.request.content.data;
+    console.log("[notifications] notificacion saldo recibida", data);
+
+    if (isBalanceUpdateNotification(data)) {
+      onBalanceUpdate(data, source);
+    }
+  };
+
+  loadNotifications()
+    .then((Notifications) => {
+      if (!Notifications || disposed) {
+        return;
+      }
+
+      Notifications.getLastNotificationResponseAsync().then((response) => {
+        if (response?.notification) {
+          const responseKey = getNotificationResponseKey(response.notification);
+
+          if (responseKey && responseKey === lastHandledResponseKey) {
+            return;
+          }
+
+          lastHandledResponseKey = responseKey;
+          showBalanceUpdate(response.notification, "response");
+        }
+      });
+
+      const receivedSubscription = Notifications.addNotificationReceivedListener(
+        (notification) => {
+          showBalanceUpdate(notification, "received");
+        },
+      );
+      const responseSubscription = Notifications.addNotificationResponseReceivedListener(
+        (response) => {
+          const responseKey = getNotificationResponseKey(response.notification);
+
+          if (responseKey && responseKey === lastHandledResponseKey) {
+            return;
+          }
+
+          lastHandledResponseKey = responseKey;
+          showBalanceUpdate(response.notification, "response");
         },
       );
 

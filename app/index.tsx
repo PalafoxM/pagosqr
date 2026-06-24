@@ -1,6 +1,8 @@
+import Constants from 'expo-constants';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   ImageBackground,
   KeyboardAvoidingView,
   Platform,
@@ -17,6 +19,20 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { clearSession, getHomePathForProfile, getStoredSession, login } from '@/services/auth';
 import { registerPushToken } from '@/services/notifications';
 
+const APP_VERSION = Constants.expoConfig?.version || '1.0.0';
+
+const registerSessionPushToken = async (token: string) => {
+  try {
+    const pushToken = await registerPushToken(token);
+
+    if (!pushToken) {
+      console.warn('No se obtuvo token push para este dispositivo.');
+    }
+  } catch (pushError) {
+    console.warn('No se pudo registrar push token.', pushError);
+  }
+};
+
 export default function LoginScreen() {
   const [usuario, setUsuario] = useState('');
   const [contrasenia, setContrasenia] = useState('');
@@ -31,13 +47,14 @@ export default function LoginScreen() {
     getStoredSession()
       .then((session) => {
         if (mounted && session) {
-          const homePath = getHomePathForProfile(session.user.id_perfil);
+          const homePath = getHomePathForProfile(
+            session.user.id_perfil,
+            session.user.id_tipo_proveedor,
+          );
 
           if (homePath) {
-            registerPushToken(session.token).catch((pushError) => {
-              console.warn("No se pudo registrar push token.", pushError);
-            });
-            router.replace(homePath);
+            registerSessionPushToken(session.token);
+            router.replace(homePath as never);
             return;
           }
 
@@ -68,7 +85,10 @@ export default function LoginScreen() {
 
     try {
       const session = await login(usuario, contrasenia);
-      const homePath = getHomePathForProfile(session.user.id_perfil);
+      const homePath = getHomePathForProfile(
+        session.user.id_perfil,
+        session.user.id_tipo_proveedor,
+      );
 
       if (!homePath) {
         await clearSession();
@@ -76,10 +96,8 @@ export default function LoginScreen() {
         return;
       }
 
-      registerPushToken(session.token).catch((pushError) => {
-        console.warn("No se pudo registrar push token.", pushError);
-      });
-      router.replace(homePath);
+      await registerSessionPushToken(session.token);
+      router.replace(homePath as never);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');
     } finally {
@@ -110,6 +128,11 @@ export default function LoginScreen() {
             contentContainerStyle={styles.content}>
             <View style={styles.form}>
               <View style={styles.header}>
+                <Image
+                  resizeMode="contain"
+                  source={require('../assets/logo2.png')}
+                  style={styles.logo}
+                />
                 <Text style={styles.title}>FIC 2026</Text>
                 <Text style={styles.subtitle}>En un lugar de la Mancha...</Text>
               </View>
@@ -169,6 +192,7 @@ export default function LoginScreen() {
                   <Text style={styles.buttonText}>Adentrarse</Text>
                 )}
               </Pressable>
+              <Text style={styles.version}>Version {APP_VERSION}</Text>
             </View>
           </ScrollView>
         </View>
@@ -204,6 +228,11 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     gap: 8,
+  },
+  logo: {
+    height: 82,
+    marginBottom: 2,
+    width: 160,
   },
   title: {
     color: '#fff3d3',
@@ -281,5 +310,11 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: 1.2,
     textTransform: 'uppercase',
+  },
+  version: {
+    color: '#e2cfaa',
+    fontSize: 12,
+    fontWeight: '800',
+    textAlign: 'center',
   },
 });
