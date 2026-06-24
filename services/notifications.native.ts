@@ -282,7 +282,7 @@ export async function registerPushToken(token: string) {
 
 export const registerDeviceForPushNotifications = registerPushToken;
 
-export const shouldUseInAppPaymentPolling = () => isExpoGoAndroid;
+export const shouldUseInAppPaymentPolling = () => Platform.OS === "android";
 
 export async function getPaymentRequestNotifications(token: string) {
   const rows = await getAuthenticated<NotificationRow[]>("/notifications/my-notifications", token);

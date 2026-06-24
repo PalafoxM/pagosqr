@@ -31,6 +31,13 @@ export type ChargeResult = {
   payment_id?: number;
   requiresNip?: boolean;
   supportsStatusPolling?: boolean;
+  push_delivery?: {
+    sent?: boolean;
+    count?: number;
+    rejected?: number;
+    reason?: string;
+    errors?: string[];
+  };
 };
 
 export type ProviderEstablecimiento = {
