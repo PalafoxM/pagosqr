@@ -33,6 +33,7 @@ expo-start.log
 
 # local env files
 .env*.local
+*firebase-adminsdk*.json
 
 # typescript
 *.tsbuildinfo

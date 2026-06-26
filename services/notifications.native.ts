@@ -63,6 +63,9 @@ const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "an
 let notificationHandlerConfigured = false;
 let expoGoAndroidWarningShown = false;
 
+const getErrorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error);
+
 const getExpoProjectId = () =>
   process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
   Constants.expoConfig?.extra?.eas?.projectId ||
@@ -89,7 +92,18 @@ async function loadNotifications(): Promise<NotificationsModule | null> {
     return null;
   }
 
-  const Notifications = await import("expo-notifications");
+  let Notifications: NotificationsModule;
+
+  try {
+    Notifications = await import("expo-notifications");
+  } catch (error) {
+    console.warn("[notifications] no se pudo cargar expo-notifications", {
+      message: getErrorMessage(error),
+      platform: Platform.OS,
+      appOwnership: Constants.appOwnership,
+    });
+    return null;
+  }
 
   if (!notificationHandlerConfigured) {
     Notifications.setNotificationHandler({
@@ -178,12 +192,19 @@ async function postAuthenticated<T>(
     },
     body: JSON.stringify(body),
   });
+  const rawBody = await response.text();
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}: ${rawBody || response.statusText}`);
   }
 
-  const result = (await response.json()) as ApiResponse<T>;
+  let result: ApiResponse<T>;
+
+  try {
+    result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
+  } catch {
+    throw new Error(`La API devolvio una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+  }
 
   if (result.error) {
     throw new Error(result.respuesta || "La API devolvio un error.");
@@ -201,12 +222,19 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
       "X-API-Token": token,
     },
   });
+  const rawBody = await response.text();
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(`HTTP ${response.status}: ${rawBody || response.statusText}`);
   }
 
-  const result = (await response.json()) as ApiResponse<T>;
+  let result: ApiResponse<T>;
+
+  try {
+    result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
+  } catch {
+    throw new Error(`La API devolvio una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+  }
 
   if (result.error) {
     throw new Error(result.respuesta || "La API devolvio un error.");
@@ -216,11 +244,13 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
 }
 
 async function savePushToken(token: string, expoPushToken: string) {
+  console.log('entro al push_token');
   const payload = {
     push_token: expoPushToken,
     platform: Platform.OS,
     app_version: Constants.expoConfig?.version || "",
   };
+  console.log(payload);
 
   console.log("[notifications] savePushToken inicio", {
     platform: payload.platform,
@@ -243,7 +273,7 @@ async function savePushToken(token: string, expoPushToken: string) {
 export async function registerPushToken(token: string) {
   console.log("[notifications] registerPushToken inicio");
   const Notifications = await loadNotifications();
-
+  //console.log(Notifications)
   if (!Notifications) {
     console.warn("[notifications] modulo no disponible, no se registra push token");
     return null;
@@ -289,7 +319,19 @@ export async function registerPushToken(token: string) {
     return null;
   }
 
-  const expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  let expoPushToken = "";
+
+  try {
+    expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+  } catch (error) {
+    console.warn("[notifications] no se pudo obtener Expo Push Token", {
+      message: getErrorMessage(error),
+      platform: Platform.OS,
+      projectId,
+    });
+    return null;
+  }
+
   console.log("[notifications] expoPushToken obtenido", {
     tokenPreview: `${expoPushToken.slice(0, 18)}...`,
   });

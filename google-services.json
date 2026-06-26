@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "201140527960",
+    "project_id": "pagofic",
+    "storage_bucket": "pagofic.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:201140527960:android:f5596e1d2f40a15ba1bb2d",
+        "android_client_info": {
+          "package_name": "com.agustinmarin.pagosfic"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB17sOs635SEoF96tesfSUeRUyOq0Y9_k8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
