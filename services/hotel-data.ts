@@ -6,6 +6,7 @@ type ApiResponse<T> = {
   data?: T;
 };
 
+
 export type HotelClientQr = {
   id_usuario: number;
   nombre_completo: string;
@@ -17,6 +18,7 @@ export type HotelCheckInResult = {
   fecha_check_in?: string;
   id_hotel_usuario?: number;
   id_establecimiento?: number;
+  tarifa_noche?: number | string;
 };
 
 const getApiBaseUrl = () => {
@@ -26,6 +28,7 @@ const getApiBaseUrl = () => {
 
   return API_BASE_URL.replace(/\/$/, "");
 };
+
 
 export const parseHotelClientQrPayload = (value: string): HotelClientQr | null => {
   try {

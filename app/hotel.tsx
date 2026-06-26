@@ -45,6 +45,8 @@ const formatCheckInDate = (value: string | undefined) => {
   });
 };
 
+const formatMoney = (value: unknown) => `$${Number(value || 0).toFixed(2)}`;
+
 export default function HotelScreen() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -286,6 +288,11 @@ export default function HotelScreen() {
               <Text style={styles.resultText}>
                 Fecha: {formatCheckInDate(result.fecha_check_in)}
               </Text>
+              {result.tarifa_noche !== undefined ? (
+                <Text style={styles.resultText}>
+                  Tarifa descontada: {formatMoney(result.tarifa_noche)}
+                </Text>
+              ) : null}
             </View>
           ) : null}
         </>

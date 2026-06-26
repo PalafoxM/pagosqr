@@ -15,6 +15,11 @@ export type AuthUser = {
   no_proveedor: number;
   nip: string;
   monto_deposito: string;
+  monto_deposito_hotel: string;
+  tarifa_noche: string;
+  tiene_alimentos: number;
+  tiene_hospedaje: number;
+  activo_qr: number;
   qr: string;
   api_token: string;
   raw?: Record<string, unknown>;
@@ -41,6 +46,9 @@ const getNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const getFlag = (value: unknown, fallback: number) =>
+  value === null || value === undefined || value === "" ? fallback : getNumber(value);
+
 const normalizeUser = (payload: unknown): AuthUser => {
   const row =
     payload && typeof payload === "object"
@@ -54,6 +62,8 @@ const normalizeUser = (payload: unknown): AuthUser => {
     getString(row.usuario);
   const monto_deposito =
     getString(row.monto_deposito) || getString(row.monto) || getString(row.deposito);
+  const monto_deposito_hotel = getString(row.monto_deposito_hotel);
+  const tarifa_noche = getString(row.tarifa_noche);
   const qr =
     getString(row.qr) ||
     getString(row.codigo_qr) ||
@@ -70,6 +80,11 @@ const normalizeUser = (payload: unknown): AuthUser => {
     no_proveedor: getNumber(row.no_proveedor),
     nip: getString(row.nip),
     monto_deposito,
+    monto_deposito_hotel,
+    tarifa_noche,
+    tiene_alimentos: getFlag(row.tiene_alimentos, 1),
+    tiene_hospedaje: getFlag(row.tiene_hospedaje, 0),
+    activo_qr: getFlag(row.activo_qr, 0),
     qr,
     api_token,
     raw: row,
@@ -144,6 +159,11 @@ export async function saveSession(session: AuthSession) {
     no_proveedor: session.user.no_proveedor,
     nip: session.user.nip,
     monto_deposito: session.user.monto_deposito,
+    monto_deposito_hotel: session.user.monto_deposito_hotel,
+    tarifa_noche: session.user.tarifa_noche,
+    tiene_alimentos: session.user.tiene_alimentos,
+    tiene_hospedaje: session.user.tiene_hospedaje,
+    activo_qr: session.user.activo_qr,
     qr: session.user.qr,
   };
 
@@ -173,6 +193,11 @@ export async function getStoredSession(): Promise<AuthSession | null> {
       user: {
         ...user,
         id_tipo_proveedor: getNumber(user.id_tipo_proveedor),
+        monto_deposito_hotel: getString(user.monto_deposito_hotel),
+        tarifa_noche: getString(user.tarifa_noche),
+        tiene_alimentos: getFlag(user.tiene_alimentos, 1),
+        tiene_hospedaje: getFlag(user.tiene_hospedaje, 0),
+        activo_qr: getFlag(user.activo_qr, 0),
         api_token: token,
       },
     };

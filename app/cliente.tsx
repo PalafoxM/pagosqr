@@ -73,6 +73,11 @@ const mergeSessionWithProfile = (
     nombre: nextProfile.nombre_completo || currentSession.user.nombre,
     nip: nextProfile.nip || currentSession.user.nip,
     monto_deposito: nextProfile.monto_deposito,
+    monto_deposito_hotel: nextProfile.monto_deposito_hotel,
+    tarifa_noche: nextProfile.tarifa_noche,
+    tiene_alimentos: nextProfile.tiene_alimentos,
+    tiene_hospedaje: nextProfile.tiene_hospedaje,
+    activo_qr: nextProfile.activo_qr,
     qr: nextProfile.qr || currentSession.user.qr,
   },
 });
@@ -278,6 +283,7 @@ export default function ClienteScreen() {
       setProfile({
         ...getFallbackClienteProfile(storedSession),
         monto_deposito: "",
+        monto_deposito_hotel: "",
       });
       setCheckingSession(false);
     });
@@ -382,6 +388,16 @@ export default function ClienteScreen() {
   }, []);
 
   const handleStartActivation = useCallback(async () => {
+    const activeProfile = profileRef.current;
+    const activeSession = sessionRef.current;
+    const activeQr = Number(activeProfile?.activo_qr ?? activeSession?.user.activo_qr ?? 0) === 1;
+
+    if (activeQr) {
+      setActivationMessage("QR activado.");
+      setActivationError("");
+      return;
+    }
+
     setActivationMessage("");
     setActivationCaptureHint("");
     setActivationError("");
@@ -545,25 +561,53 @@ export default function ClienteScreen() {
   );
 
   const applyBalanceUpdate = useCallback(
-    async (balance: unknown, reason: string) => {
+    async (
+      balanceUpdate: { current_balance?: unknown; monto_deposito_hotel?: unknown; hotel_balance?: unknown },
+      reason: string,
+    ) => {
       const activeSession = sessionRef.current;
 
       if (!activeSession) {
         return;
       }
 
-      const montoDeposito = formatBalance(balance);
+      const currentProfile = profileRef.current;
+      const hasFoodBalance =
+        balanceUpdate.current_balance !== undefined &&
+        balanceUpdate.current_balance !== null;
+      const hasHotelBalance =
+        (balanceUpdate.monto_deposito_hotel !== undefined &&
+          balanceUpdate.monto_deposito_hotel !== null) ||
+        (balanceUpdate.hotel_balance !== undefined &&
+          balanceUpdate.hotel_balance !== null);
+
+      if (!hasFoodBalance && !hasHotelBalance) {
+        return;
+      }
+
+      const montoDeposito = hasFoodBalance
+        ? formatBalance(balanceUpdate.current_balance)
+        : currentProfile?.monto_deposito || activeSession.user.monto_deposito;
+      const montoDepositoHotel = hasHotelBalance
+        ? formatBalance(balanceUpdate.monto_deposito_hotel ?? balanceUpdate.hotel_balance)
+        : currentProfile?.monto_deposito_hotel || activeSession.user.monto_deposito_hotel;
+
       logClienteSaldo("saldo actualizado por notificacion", {
         reason,
         monto_deposito: montoDeposito,
+        monto_deposito_hotel: montoDepositoHotel,
       });
 
-      const currentProfile = profileRef.current;
       const nextProfile = currentProfile
-        ? { ...currentProfile, monto_deposito: montoDeposito }
+        ? {
+            ...currentProfile,
+            monto_deposito: montoDeposito,
+            monto_deposito_hotel: montoDepositoHotel,
+          }
         : {
             ...getFallbackClienteProfile(activeSession),
             monto_deposito: montoDeposito,
+            monto_deposito_hotel: montoDepositoHotel,
           };
       const nextSession = mergeSessionWithProfile(activeSession, nextProfile);
 
@@ -697,14 +741,7 @@ export default function ClienteScreen() {
 
   useEffect(() => {
     return observeBalanceUpdates((balanceUpdate, source) => {
-      if (
-        balanceUpdate.current_balance === undefined ||
-        balanceUpdate.current_balance === null
-      ) {
-        return;
-      }
-
-      void applyBalanceUpdate(balanceUpdate.current_balance, source);
+      void applyBalanceUpdate(balanceUpdate, source);
     });
   }, [applyBalanceUpdate]);
 
@@ -765,7 +802,19 @@ export default function ClienteScreen() {
   const displayedBalance =
     profile?.monto_deposito !== undefined && profile.monto_deposito !== ""
       ? profile.monto_deposito
-      : null;
+      : profileLoading
+        ? null
+        : "0";
+  const displayedHotelBalance =
+    profile?.monto_deposito_hotel !== undefined &&
+    profile.monto_deposito_hotel !== ""
+      ? profile.monto_deposito_hotel
+      : profileLoading
+        ? null
+        : "0";
+  const showFoodBalance = (profile?.tiene_alimentos ?? 1) === 1;
+  const showHotelBalance = (profile?.tiene_hospedaje ?? 0) === 1;
+  const qrActivo = Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
 
   return (
     <ScrollView
@@ -795,7 +844,7 @@ export default function ClienteScreen() {
                 Hola, {profile?.nombre_completo || "cliente"}
               </Text>
               <Text style={styles.body}>
-                Credencial inspirada en Don Quijote.
+                Credencial Cervantes Saavedra.
               </Text>
             </View>
             <Pressable
@@ -891,13 +940,40 @@ export default function ClienteScreen() {
 
           {activeTab === "datos" ? (
             <View style={styles.panel}>
-              <View style={styles.balancePanel}>
-                <Text style={styles.balanceLabel}>Saldo disponible</Text>
-                <Text style={styles.balanceValue}>
-                  {displayedBalance === null
-                    ? "Consultando..."
-                    : `$${formatBalance(displayedBalance)}`}
-                </Text>
+              <View style={styles.balanceGrid}>
+                {showFoodBalance ? (
+                  <View style={styles.balancePanel}>
+                    <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                    <Text style={styles.balanceValue}>
+                      {displayedBalance === null
+                        ? "Consultando..."
+                        : `$${formatBalance(displayedBalance)}`}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {showHotelBalance ? (
+                  <View style={styles.balancePanel}>
+                    <Text style={styles.balanceLabel}>Saldo hospedaje</Text>
+                    <Text style={styles.balanceValue}>
+                      {displayedHotelBalance === null
+                        ? "Consultando..."
+                        : `$${formatBalance(displayedHotelBalance)}`}
+                    </Text>
+                    <Text style={styles.balanceHint}>
+                      Tarifa noche: ${formatBalance(profile?.tarifa_noche)}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {!showFoodBalance && !showHotelBalance ? (
+                  <View style={styles.balancePanel}>
+                    <Text style={styles.balanceLabel}>Saldos</Text>
+                    <Text style={styles.balanceHint}>
+                      No hay beneficios activos para esta cuenta.
+                    </Text>
+                  </View>
+                ) : null}
               </View>
 
               <View style={styles.qrBox}>
@@ -994,12 +1070,12 @@ export default function ClienteScreen() {
 
               <View style={styles.activationBox}>
                 <Pressable
-                  disabled={activationLoading}
+                  disabled={activationLoading || qrActivo}
                   onPress={handleStartActivation}
                   style={({ pressed }) => [
                     styles.activationButton,
                     pressed && styles.pressed,
-                    activationLoading && styles.mapButtonDisabled,
+                    (activationLoading || qrActivo) && styles.mapButtonDisabled,
                   ]}
                 >
                   <IconSymbol
@@ -1007,10 +1083,12 @@ export default function ClienteScreen() {
                     name="qrcode.viewfinder"
                     size={20}
                   />
-                  <Text style={styles.activationButtonText}>Activar QR</Text>
+                  <Text style={styles.activationButtonText}>
+                    {qrActivo ? "QR activado" : "Activar QR"}
+                  </Text>
                 </Pressable>
 
-                {activationStep === "front" || activationStep === "back" ? (
+                {!qrActivo && (activationStep === "front" || activationStep === "back") ? (
                   <View style={styles.activationCameraPanel}>
                     <View style={styles.activationProgressRow}>
                       <View style={[styles.activationStepPill, styles.activationStepPillActive]}>
@@ -1090,7 +1168,7 @@ export default function ClienteScreen() {
                   </View>
                 ) : null}
 
-                {activationStep === "signature" ? (
+                {!qrActivo && activationStep === "signature" ? (
                   <View style={styles.signaturePanel}>
                     <Text style={styles.activationTitle}>
                       Firma con tu dedo
@@ -1429,6 +1507,9 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 20,
   },
+  balanceGrid: {
+    gap: 12,
+  },
   balancePanel: {
     backgroundColor: "#24160f",
     borderColor: "#d5a84f",
@@ -1449,6 +1530,12 @@ const styles = StyleSheet.create({
     fontSize: 38,
     fontWeight: "900",
     lineHeight: 44,
+  },
+  balanceHint: {
+    color: "#e7d7b5",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 20,
   },
   qrBox: {
     alignItems: "center",

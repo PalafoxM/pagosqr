@@ -19,6 +19,8 @@ export type BalanceUpdateNotification = {
   type?: string;
   transactionId?: number | string;
   current_balance?: number | string;
+  monto_deposito_hotel?: number | string;
+  hotel_balance?: number | string;
   paymentMethod?: string;
 };
 
@@ -136,7 +138,10 @@ export const isBalanceUpdateNotification = (
   return (
     (payload.type === "PAYMENT_COMPLETED" ||
       payload.type === "BALANCE_UPDATED") &&
-    Boolean(payload.transactionId)
+    (Boolean(payload.transactionId) ||
+      payload.current_balance !== undefined ||
+      payload.monto_deposito_hotel !== undefined ||
+      payload.hotel_balance !== undefined)
   );
 };
 

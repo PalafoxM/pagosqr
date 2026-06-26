@@ -12,6 +12,11 @@ export type ClienteProfile = {
   nombre_completo: string;
   nip: string;
   monto_deposito: string;
+  monto_deposito_hotel: string;
+  tarifa_noche: string;
+  tiene_alimentos: number;
+  tiene_hospedaje: number;
+  activo_qr: number;
   qr: string;
 };
 
@@ -49,6 +54,9 @@ const getNumber = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const getFlag = (value: unknown, fallback: number) =>
+  value === null || value === undefined || value === "" ? fallback : getNumber(value);
 
 const logSaldo = (message: string, details?: Record<string, unknown>) => {
   console.log(`[cliente:saldo] ${message}`, details || {});
@@ -112,6 +120,7 @@ async function fetchRows(
     table,
     rows: rows.length,
     monto_deposito: rows[0]?.monto_deposito,
+    monto_deposito_hotel: rows[0]?.monto_deposito_hotel,
   });
 
   return rows;
@@ -148,6 +157,7 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
   logSaldo("GET ok", {
     path,
     monto_deposito: row.monto_deposito,
+    monto_deposito_hotel: row.monto_deposito_hotel,
     id_usuario: row.id_usuario,
   });
 
@@ -160,6 +170,11 @@ export const getFallbackClienteProfile = (
   nombre_completo: session.user.nombre,
   nip: session.user.nip,
   monto_deposito: session.user.monto_deposito,
+  monto_deposito_hotel: session.user.monto_deposito_hotel,
+  tarifa_noche: session.user.tarifa_noche,
+  tiene_alimentos: getFlag(session.user.tiene_alimentos, 1),
+  tiene_hospedaje: getFlag(session.user.tiene_hospedaje, 0),
+  activo_qr: getFlag(session.user.activo_qr, 0),
   qr: session.user.qr,
 });
 
@@ -186,6 +201,11 @@ export async function getClienteProfile(
     logSaldo("perfil via endpoint", {
       id_usuario: row.id_usuario,
       monto_deposito: row.monto_deposito,
+      monto_deposito_hotel: row.monto_deposito_hotel,
+      tarifa_noche: row.tarifa_noche,
+      tiene_alimentos: row.tiene_alimentos,
+      tiene_hospedaje: row.tiene_hospedaje,
+      activo_qr: row.activo_qr,
     });
   } catch (endpointError) {
     logSaldo("perfil endpoint fallo, usando fallback", {
@@ -214,10 +234,14 @@ export async function getClienteProfile(
     logSaldo("perfil fallback combinado", {
       monto_vw: profileRows[0]?.monto_deposito,
       monto_usuario: userRows[0]?.monto_deposito,
+      monto_hotel_usuario: userRows[0]?.monto_deposito_hotel,
       monto_final: row.monto_deposito,
     });
   }
 
+  const tieneAlimentos = getFlag(row.tiene_alimentos, getFlag(session.user.tiene_alimentos, 1));
+  const tieneHospedaje = getFlag(row.tiene_hospedaje, getFlag(session.user.tiene_hospedaje, 0));
+  const activoQr = getFlag(row.activo_qr, getFlag(session.user.activo_qr, 0));
   const profile = {
     nombre_completo:
       getString(row.nombre_completo) ||
@@ -228,12 +252,28 @@ export async function getClienteProfile(
       getString(row.monto_deposito) ||
       getString(row.monto) ||
       session.user.monto_deposito,
+    monto_deposito_hotel:
+      getString(row.monto_deposito_hotel) ||
+      getString(row.monto_hotel) ||
+      session.user.monto_deposito_hotel,
+    tarifa_noche:
+      getString(row.tarifa_noche) ||
+      getString(row.tarifa_hotel) ||
+      session.user.tarifa_noche,
+    tiene_alimentos: tieneAlimentos,
+    tiene_hospedaje: tieneHospedaje,
+    activo_qr: activoQr,
     qr: getString(row.qr) || getString(row.codigo_qr) || session.user.qr,
   };
 
   logSaldo("perfil final", {
     id_usuario: session.user.id_usuario,
     monto_deposito: profile.monto_deposito,
+    monto_deposito_hotel: profile.monto_deposito_hotel,
+    tarifa_noche: profile.tarifa_noche,
+    tiene_alimentos: profile.tiene_alimentos,
+    tiene_hospedaje: profile.tiene_hospedaje,
+    activo_qr: profile.activo_qr,
   });
 
   return profile;
