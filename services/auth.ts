@@ -3,6 +3,7 @@ import * as SecureStore from "expo-secure-store";
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const SESSION_TOKEN_KEY = "pagosfic.session.token";
 const SESSION_USER_KEY = "pagosfic.session.user";
+const REMEMBERED_CREDENTIALS_KEY = "pagosfic.remembered.credentials";
 const ALLOWED_PROFILE_IDS = new Set([2, 3]);
 
 export type AuthUser = {
@@ -37,6 +38,11 @@ type ApiLoginResponse = {
 };
 
 type StoredAuthUser = Omit<AuthUser, "api_token" | "raw">;
+
+export type RememberedCredentials = {
+  usuario: string;
+  contrasenia: string;
+};
 
 const getString = (value: unknown) =>
   value === null || value === undefined ? "" : String(value);
@@ -207,6 +213,38 @@ export async function getStoredSession(): Promise<AuthSession | null> {
   }
 }
 
+export async function saveRememberedCredentials(credentials: RememberedCredentials) {
+  await SecureStore.setItemAsync(
+    REMEMBERED_CREDENTIALS_KEY,
+    JSON.stringify({
+      usuario: credentials.usuario.trim(),
+      contrasenia: credentials.contrasenia,
+    }),
+  );
+}
+
+export async function getRememberedCredentials(): Promise<RememberedCredentials | null> {
+  const stored = await SecureStore.getItemAsync(REMEMBERED_CREDENTIALS_KEY);
+
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    const credentials = JSON.parse(stored) as RememberedCredentials;
+    return {
+      usuario: getString(credentials.usuario),
+      contrasenia: getString(credentials.contrasenia),
+    };
+  } catch {
+    await clearRememberedCredentials();
+    return null;
+  }
+}
+
+export async function clearRememberedCredentials() {
+  await SecureStore.deleteItemAsync(REMEMBERED_CREDENTIALS_KEY);
+}
 export async function clearSession() {
   await Promise.all([
     SecureStore.deleteItemAsync(SESSION_TOKEN_KEY),

@@ -50,6 +50,33 @@ const getApiBaseUrl = () => {
 const getString = (value: unknown) =>
   value === null || value === undefined ? "" : String(value);
 
+const decodeDisplayText = (value: unknown) => {
+  const entities: Record<string, string> = {
+    aacute: "á",
+    eacute: "é",
+    iacute: "í",
+    oacute: "ó",
+    uacute: "ú",
+    ntilde: "ñ",
+    Aacute: "Á",
+    Eacute: "É",
+    Iacute: "Í",
+    Oacute: "Ó",
+    Uacute: "Ú",
+    Ntilde: "Ñ",
+    amp: "&",
+  };
+
+  return getString(value)
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&([a-zA-Z]+);/g, (match, entity) => entities[entity] || match)
+    .replace(/https?:\/\/\S+|www\.\S+/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
 const getNumber = (value: unknown) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -290,9 +317,9 @@ export async function getEstablecimientosFic(
 
   return rows.map((row) => ({
     id_establecimiento: getNumber(row.id_establecimiento ?? row.id),
-    dsc_establecimiento: getString(row.dsc_establecimiento),
-    ubicacion: getString(row.ubicacion),
-    direccion: getString(row.direccion),
+    dsc_establecimiento: decodeDisplayText(row.dsc_establecimiento),
+    ubicacion: decodeDisplayText(row.ubicacion),
+    direccion: decodeDisplayText(row.direccion),
   }));
 }
 

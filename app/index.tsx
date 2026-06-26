@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,10 +14,17 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { router } from 'expo-router';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { clearSession, getHomePathForProfile, getStoredSession, login } from '@/services/auth';
+import {
+  clearRememberedCredentials,
+  clearSession,
+  getHomePathForProfile,
+  getRememberedCredentials,
+  getStoredSession,
+  login,
+  saveRememberedCredentials,
+} from '@/services/auth';
 import { registerPushToken } from '@/services/notifications';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.0.0';
@@ -40,9 +48,18 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
+  const [rememberPassword, setRememberPassword] = useState(false);
 
   useEffect(() => {
     let mounted = true;
+
+    getRememberedCredentials().then((credentials) => {
+      if (mounted && credentials) {
+        setUsuario(credentials.usuario);
+        setContrasenia(credentials.contrasenia);
+        setRememberPassword(true);
+      }
+    });
 
     getStoredSession()
       .then((session) => {
@@ -94,6 +111,12 @@ export default function LoginScreen() {
         await clearSession();
         setError('Este perfil no tiene acceso a la app.');
         return;
+      }
+
+      if (rememberPassword) {
+        await saveRememberedCredentials({ usuario, contrasenia });
+      } else {
+        await clearRememberedCredentials();
       }
 
       await registerSessionPushToken(session.token);
@@ -172,6 +195,17 @@ export default function LoginScreen() {
                 />
               </Pressable>
               </View>
+
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: rememberPassword }}
+                onPress={() => setRememberPassword((checked) => !checked)}
+                style={({ pressed }) => [styles.rememberRow, pressed && styles.rememberRowPressed]}>
+                <View style={[styles.checkbox, rememberPassword && styles.checkboxChecked]}>
+                  {rememberPassword ? <Text style={styles.checkboxMark}>x</Text> : null}
+                </View>
+                <Text style={styles.rememberText}>Recordar contraseña</Text>
+              </Pressable>
 
               {error ? (
                 <Text selectable style={styles.error}>
@@ -286,6 +320,38 @@ const styles = StyleSheet.create({
   },
   eyeButtonPressed: {
     opacity: 0.6,
+  },
+  rememberRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 10,
+  },
+  rememberRowPressed: {
+    opacity: 0.7,
+  },
+  checkbox: {
+    alignItems: 'center',
+    borderColor: 'rgba(226, 207, 170, 0.7)',
+    borderRadius: 4,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: 'center',
+    width: 22,
+  },
+  checkboxChecked: {
+    backgroundColor: '#b13f4b',
+    borderColor: '#ffcf83',
+  },
+  checkboxMark: {
+    color: '#fff3d3',
+    fontSize: 13,
+    fontWeight: '900',
+    lineHeight: 16,
+  },
+  rememberText: {
+    color: '#e2cfaa',
+    fontSize: 14,
+    fontWeight: '700',
   },
   error: {
     color: '#ffcf83',

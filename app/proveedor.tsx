@@ -297,7 +297,7 @@ export default function ProveedorScreen() {
               </Text>
             </View>
             <Pressable
-              accessibilityLabel="Cerrar sesion"
+              accessibilityLabel="Cerrar sesión"
               accessibilityRole="button"
               onPress={handleLogout}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
@@ -360,13 +360,13 @@ export default function ProveedorScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   onChangeText={setQrCode}
-                  placeholder="Escanea o pega el codigo QR"
+                  placeholder="Escanea o pega el código QR"
                   placeholderTextColor="#9b876a"
                   style={[styles.input, styles.qrInput]}
                   value={parsedClient?.nombre_completo ?? qrCode}
                 />
                 <Pressable
-                  accessibilityLabel="Escanear codigo QR"
+                  accessibilityLabel="Escanear código QR"
                   accessibilityRole="button"
                   onPress={handleOpenScanner}
                   style={({ pressed }) => [styles.scanButton, pressed && styles.pressed]}>

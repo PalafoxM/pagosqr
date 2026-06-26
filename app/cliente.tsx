@@ -838,17 +838,17 @@ export default function ClienteScreen() {
             </View>
             <View style={styles.bannerCopy}>
               <Text style={styles.kicker}>
-                Festival Internacional Cervantino
+                Hospedaje y Alimentos FIC
               </Text>
               <Text style={styles.title}>
                 Hola, {profile?.nombre_completo || "cliente"}
               </Text>
               <Text style={styles.body}>
-                Credencial Cervantes Saavedra.
+                de cuyo nombre no quiero acordarme...
               </Text>
             </View>
             <Pressable
-              accessibilityLabel="Cerrar sesion"
+              accessibilityLabel="Cerrar sesión"
               accessibilityRole="button"
               onPress={handleLogout}
               style={({ pressed }) => [
@@ -987,7 +987,7 @@ export default function ClienteScreen() {
                     />
                   </View>
                 ) : (
-                  <Text style={styles.emptyQr}>En espera de codigo QR</Text>
+                  <Text style={styles.emptyQr}>En espera de código QR</Text>
                 )}
               </View>
 
@@ -1034,10 +1034,10 @@ export default function ClienteScreen() {
                     {item.dsc_establecimiento || "Establecimiento"}
                   </Text>
                   <Text style={styles.establecimientoText}>
-                    {item.ubicacion || "Sin ubicacion"}
+                    {item.ubicacion || "Sin ubicación"}
                   </Text>
                   <Text style={styles.establecimientoText}>
-                    {item.direccion || "Sin direccion"}
+                    {item.direccion || "Sin dirección"}
                   </Text>
                   <Pressable
                     disabled={!item.ubicacion && !item.direccion}
@@ -1286,7 +1286,7 @@ export default function ClienteScreen() {
               </View>
 
               <Pressable onPress={handleLogout} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonText}>Cerrar sesion</Text>
+                <Text style={styles.secondaryButtonText}>Cerrar sesión</Text>
               </Pressable>
             </View>
           ) : null}
