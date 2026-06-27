@@ -101,7 +101,7 @@ async function postAuthenticated<T>(
   return result.data as T;
 }
 
-export async function registerPushToken(_token: string) {
+export async function registerPushToken(_token: string, _userId?: number) {
   return null;
 }
 

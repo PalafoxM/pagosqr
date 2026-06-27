@@ -41,8 +41,11 @@ type StoredAuthUser = Omit<AuthUser, "api_token" | "raw">;
 
 export type RememberedCredentials = {
   usuario: string;
-  contrasenia: string;
 };
+
+const LOGIN_TIMEOUT_MS = 15000;
+const USERNAME_PATTERN = /^[A-Za-z0-9._@-]{3,80}$/;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 const getString = (value: unknown) =>
   value === null || value === undefined ? "" : String(value);
@@ -105,25 +108,61 @@ const getLoginUrl = () => {
   return `${API_BASE_URL.replace(/\/$/, "")}/login`;
 };
 
+const sanitizeUsername = (value: string) => {
+  const sanitized = value.trim();
+
+  if (!USERNAME_PATTERN.test(sanitized)) {
+    throw new Error("El usuario contiene caracteres no permitidos.");
+  }
+
+  return sanitized;
+};
+
+const sanitizePassword = (value: string) => {
+  if (!value || value.length > 128 || CONTROL_CHAR_PATTERN.test(value)) {
+    throw new Error("La contrasenia no tiene un formato valido.");
+  }
+
+  return value;
+};
+
 export async function login(
   usuario: string,
   contrasenia: string,
 ): Promise<AuthSession> {
-  const response = await fetch(getLoginUrl(), {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      data: {
-        where: {
-          usuario: usuario.trim(),
-          contrasenia,
-        },
+  const sanitizedUsuario = sanitizeUsername(usuario);
+  const sanitizedContrasenia = sanitizePassword(contrasenia);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LOGIN_TIMEOUT_MS);
+
+  let response: Response;
+
+  try {
+    response = await fetch(getLoginUrl(), {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
       },
-    }),
-  });
+      signal: controller.signal,
+      body: JSON.stringify({
+        data: {
+          where: {
+            usuario: sanitizedUsuario,
+            contrasenia: sanitizedContrasenia,
+          },
+        },
+      }),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("La solicitud tardo demasiado. Intenta de nuevo.");
+    }
+
+    throw new Error("No se pudo conectar con la API.");
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   let result: ApiLoginResponse | null = null;
 
@@ -132,11 +171,11 @@ export async function login(
   } catch {}
 
   if (!response.ok) {
-    throw new Error(result?.respuesta || `No se pudo conectar con la API. HTTP ${response.status}`);
+    throw new Error(result?.respuesta || "No se pudo conectar con la API.");
   }
 
   if (result?.error) {
-    throw new Error(result.respuesta || "Usuario o contrasenia incorrectos.");
+    throw new Error("Usuario o contrasenia incorrectos.");
   }
 
   const user = normalizeUser(result?.data?.[0]);
@@ -218,7 +257,6 @@ export async function saveRememberedCredentials(credentials: RememberedCredentia
     REMEMBERED_CREDENTIALS_KEY,
     JSON.stringify({
       usuario: credentials.usuario.trim(),
-      contrasenia: credentials.contrasenia,
     }),
   );
 }
@@ -232,10 +270,13 @@ export async function getRememberedCredentials(): Promise<RememberedCredentials 
 
   try {
     const credentials = JSON.parse(stored) as RememberedCredentials;
-    return {
+    const rememberedCredentials = {
       usuario: getString(credentials.usuario),
-      contrasenia: getString(credentials.contrasenia),
     };
+
+    await saveRememberedCredentials(rememberedCredentials);
+
+    return rememberedCredentials;
   } catch {
     await clearRememberedCredentials();
     return null;

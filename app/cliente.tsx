@@ -250,7 +250,7 @@ export default function ClienteScreen() {
     }
 
     registeredPushTokenForSessionRef.current = sessionToken;
-    registerPushToken(activeSession.token).catch((pushError) => {
+    registerPushToken(activeSession.token, activeSession.user.id_usuario).catch((pushError) => {
       console.warn("No se pudo registrar push token.", pushError);
       registeredPushTokenForSessionRef.current = "";
     });
@@ -705,13 +705,6 @@ export default function ClienteScreen() {
             onPress: () => {
               promptedPaymentRef.current = null;
               handlePaymentAction("reject", nextPaymentRequest);
-            },
-          },
-          {
-            text: "Despues",
-            style: "cancel",
-            onPress: () => {
-              promptedPaymentRef.current = null;
             },
           },
           {

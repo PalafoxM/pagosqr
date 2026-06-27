@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -54,6 +55,7 @@ type ApiResponse<T> = {
 
 type NotificationsModule = typeof import("expo-notifications");
 type NotificationPayload = {
+  date?: number;
   request: {
     content: {
       data?: unknown;
@@ -62,8 +64,16 @@ type NotificationPayload = {
 };
 
 const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
+const PUSH_REGISTRATION_KEY = "pagosfic.push.registration";
+const LAST_NOTIFICATION_MAX_AGE_MS = 15000;
 let notificationHandlerConfigured = false;
 let expoGoAndroidWarningShown = false;
+
+type StoredPushRegistration = {
+  platform?: string;
+  pushToken?: string;
+  userId?: number;
+};
 
 const getErrorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -80,6 +90,42 @@ const getApiBaseUrl = () => {
   }
 
   return API_BASE_URL.replace(/\/$/, "");
+};
+
+const getStoredPushRegistration = async (): Promise<StoredPushRegistration | null> => {
+  const stored = await SecureStore.getItemAsync(PUSH_REGISTRATION_KEY);
+
+  if (!stored) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(stored) as StoredPushRegistration;
+  } catch {
+    await SecureStore.deleteItemAsync(PUSH_REGISTRATION_KEY);
+    return null;
+  }
+};
+
+const saveStoredPushRegistration = async (
+  registration: StoredPushRegistration,
+) => {
+  await SecureStore.setItemAsync(
+    PUSH_REGISTRATION_KEY,
+    JSON.stringify(registration),
+  );
+};
+
+const isRecentNotification = (
+  notification: NotificationPayload,
+  observerStartedAt: number,
+) => {
+  const notificationDate = Number(notification.date || 0);
+
+  return (
+    notificationDate > 0 &&
+    notificationDate >= observerStartedAt - LAST_NOTIFICATION_MAX_AGE_MS
+  );
 };
 
 async function loadNotifications(): Promise<NotificationsModule | null> {
@@ -155,6 +201,8 @@ const getNotificationResponseKey = (notification: NotificationPayload) => {
     payload.total || "",
     payload.vendorId || "",
     payload.current_balance || "",
+    payload.monto_deposito_hotel || "",
+    payload.hotel_balance || "",
   ].join(":");
 };
 
@@ -248,18 +296,18 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
   return result.data as T;
 }
 
-async function savePushToken(token: string, expoPushToken: string) {
-  console.log('entro al push_token');
+async function savePushToken(token: string, expoPushToken: string, userId?: number) {
   const payload = {
     push_token: expoPushToken,
     platform: Platform.OS,
     app_version: Constants.expoConfig?.version || "",
+    id_usuario: userId || undefined,
   };
-  console.log(payload);
 
   console.log("[notifications] savePushToken inicio", {
     platform: payload.platform,
     appVersion: payload.app_version,
+    userId: payload.id_usuario || null,
     tokenPreview: `${expoPushToken.slice(0, 18)}...`,
   });
 
@@ -275,7 +323,7 @@ async function savePushToken(token: string, expoPushToken: string) {
   }
 }
 
-export async function registerPushToken(token: string) {
+export async function registerPushToken(token: string, userId?: number) {
   console.log("[notifications] registerPushToken inicio");
   const Notifications = await loadNotifications();
   //console.log(Notifications)
@@ -341,7 +389,23 @@ export async function registerPushToken(token: string) {
     tokenPreview: `${expoPushToken.slice(0, 18)}...`,
   });
 
-  await savePushToken(token, expoPushToken);
+  const storedRegistration = await getStoredPushRegistration();
+
+  if (
+    storedRegistration?.pushToken === expoPushToken &&
+    storedRegistration.platform === Platform.OS &&
+    storedRegistration.userId === (userId || 0)
+  ) {
+    console.log("[notifications] push token ya registrado para este usuario");
+    return expoPushToken;
+  }
+
+  await savePushToken(token, expoPushToken, userId);
+  await saveStoredPushRegistration({
+    platform: Platform.OS,
+    pushToken: expoPushToken,
+    userId: userId || 0,
+  });
 
   return expoPushToken;
 }
@@ -368,6 +432,7 @@ export function observePaymentRequests(
   let cleanup = () => {};
   let disposed = false;
   let lastHandledResponseKey = "";
+  const observerStartedAt = Date.now();
 
   const showPaymentRequest = (
     notification: NotificationPayload,
@@ -389,6 +454,11 @@ export function observePaymentRequests(
 
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response?.notification) {
+          if (!isRecentNotification(response.notification, observerStartedAt)) {
+            console.log("[notifications] ultima respuesta antigua ignorada", response.notification.request.content.data);
+            return;
+          }
+
           const responseKey = getNotificationResponseKey(response.notification);
 
           if (responseKey && responseKey === lastHandledResponseKey) {
@@ -454,6 +524,7 @@ export function observeBalanceUpdates(
   let cleanup = () => {};
   let disposed = false;
   let lastHandledResponseKey = "";
+  const observerStartedAt = Date.now();
 
   const showBalanceUpdate = (
     notification: NotificationPayload,
@@ -475,6 +546,10 @@ export function observeBalanceUpdates(
 
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response?.notification) {
+          if (!isRecentNotification(response.notification, observerStartedAt)) {
+            return;
+          }
+
           const responseKey = getNotificationResponseKey(response.notification);
 
           if (responseKey && responseKey === lastHandledResponseKey) {

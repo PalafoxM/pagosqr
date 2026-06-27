@@ -86,7 +86,7 @@ export default function HotelScreen() {
       return;
     }
 
-    registerPushToken(session.token).catch((pushError) => {
+    registerPushToken(session.token, session.user.id_usuario).catch((pushError) => {
       console.warn("No se pudo registrar push token.", pushError);
     });
   }, [session]);

@@ -23,6 +23,8 @@ import {
   ProviderEstablecimiento,
 } from "@/services/provider-data";
 
+const TIP_PERCENTAGES = [0, 5, 10, 15];
+
 const moneyFromText = (value: string) => {
   const normalized = value.replace(",", ".").trim();
   const parsed = Number(normalized);
@@ -61,7 +63,7 @@ export default function ProveedorScreen() {
   const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
   const [qrCode, setQrCode] = useState("");
   const [amount, setAmount] = useState("");
-  const [tip, setTip] = useState("");
+  const [tipPercentage, setTipPercentage] = useState(0);
   const [description, setDescription] = useState("Consumo en establecimiento");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("app");
   const [nip, setNip] = useState("");
@@ -109,7 +111,7 @@ export default function ProveedorScreen() {
       return;
     }
 
-    registerPushToken(session.token).catch((pushError) => {
+    registerPushToken(session.token, session.user.id_usuario).catch((pushError) => {
       console.warn("No se pudo registrar push token.", pushError);
     });
   }, [session]);
@@ -152,7 +154,10 @@ export default function ProveedorScreen() {
   }, [selectedEstablecimientoId, session]);
 
   const subtotal = useMemo(() => moneyFromText(amount), [amount]);
-  const tipAmount = useMemo(() => moneyFromText(tip), [tip]);
+  const tipAmount = useMemo(
+    () => Number(((subtotal * tipPercentage) / 100).toFixed(2)),
+    [subtotal, tipPercentage],
+  );
   const total = subtotal + tipAmount;
   const selectedEstablecimiento = establecimientos.find(
     (item) => Number(item.id_establecimiento) === selectedEstablecimientoId,
@@ -175,7 +180,7 @@ export default function ProveedorScreen() {
   const handleResetCharge = () => {
     setQrCode("");
     setAmount("");
-    setTip("");
+    setTipPercentage(0);
     setDescription("Consumo en establecimiento");
     setPaymentMethod("app");
     setNip("");
@@ -247,7 +252,7 @@ export default function ProveedorScreen() {
       setResult(chargeResult);
       setQrCode("");
       setAmount("");
-      setTip("");
+      setTipPercentage(0);
       setNip("");
     } catch (chargeError) {
       setError(chargeError instanceof Error ? chargeError.message : "No se pudo realizar el cobro.");
@@ -420,16 +425,37 @@ export default function ProveedorScreen() {
                   value={amount}
                 />
               </View>
-              <View style={[styles.field, styles.moneyField]}>
+            </View>
+
+            <View style={styles.field}>
+              <View style={styles.tipHeader}>
                 <Text style={styles.label}>Propina</Text>
-                <TextInput
-                  keyboardType="decimal-pad"
-                  onChangeText={setTip}
-                  placeholder="0.00"
-                  placeholderTextColor="#9b876a"
-                  style={styles.input}
-                  value={tip}
-                />
+                <Text style={styles.tipAmountText}>${tipAmount.toFixed(2)}</Text>
+              </View>
+              <View style={styles.tipPercentageList}>
+                {TIP_PERCENTAGES.map((percentage) => {
+                  const selected = tipPercentage === percentage;
+
+                  return (
+                    <Pressable
+                      accessibilityRole="button"
+                      key={percentage}
+                      onPress={() => setTipPercentage(percentage)}
+                      style={({ pressed }) => [
+                        styles.tipPercentageButton,
+                        selected && styles.tipPercentageButtonActive,
+                        pressed && styles.pressed,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.tipPercentageText,
+                          selected && styles.tipPercentageTextActive,
+                        ]}>
+                        {percentage}%
+                      </Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             </View>
 
@@ -766,6 +792,42 @@ const styles = StyleSheet.create({
   },
   moneyField: {
     flex: 1,
+  },
+  tipHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  tipAmountText: {
+    color: "#3b2619",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  tipPercentageList: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  tipPercentageButton: {
+    alignItems: "center",
+    backgroundColor: "#f9efd9",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: "center",
+    minHeight: 44,
+  },
+  tipPercentageButtonActive: {
+    backgroundColor: "#8f1d2c",
+    borderColor: "#8f1d2c",
+  },
+  tipPercentageText: {
+    color: "#3b2619",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  tipPercentageTextActive: {
+    color: "#fff8e8",
   },
   segmented: {
     backgroundColor: "#e7d7b5",

@@ -28,10 +28,12 @@ import {
 import { registerPushToken } from '@/services/notifications';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.0.0';
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 60000;
 
-const registerSessionPushToken = async (token: string) => {
+const registerSessionPushToken = async (token: string, userId?: number) => {
   try {
-    const pushToken = await registerPushToken(token);
+    const pushToken = await registerPushToken(token, userId);
 
     if (!pushToken) {
       console.warn('No se obtuvo token push para este dispositivo.');
@@ -48,7 +50,9 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberPassword, setRememberPassword] = useState(false);
+  const [rememberUser, setRememberUser] = useState(false);
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockedUntil, setLockedUntil] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -56,8 +60,7 @@ export default function LoginScreen() {
     getRememberedCredentials().then((credentials) => {
       if (mounted && credentials) {
         setUsuario(credentials.usuario);
-        setContrasenia(credentials.contrasenia);
-        setRememberPassword(true);
+        setRememberUser(true);
       }
     });
 
@@ -70,7 +73,7 @@ export default function LoginScreen() {
           );
 
           if (homePath) {
-            registerSessionPushToken(session.token);
+            registerSessionPushToken(session.token, session.user.id_usuario);
             router.replace(homePath as never);
             return;
           }
@@ -89,9 +92,16 @@ export default function LoginScreen() {
     };
   }, []);
 
-  const canSubmit = usuario.trim().length > 0 && contrasenia.length > 0 && !loading;
+  const isLocked = lockedUntil > Date.now();
+  const canSubmit = usuario.trim().length > 0 && contrasenia.length > 0 && !loading && !isLocked;
 
   const handleLogin = async () => {
+    if (isLocked) {
+      const remainingSeconds = Math.ceil((lockedUntil - Date.now()) / 1000);
+      setError(`Demasiados intentos. Espera ${remainingSeconds} segundos.`);
+      return;
+    }
+
     if (!canSubmit) {
       setError('Escribe usuario y contrasenia.');
       return;
@@ -113,16 +123,26 @@ export default function LoginScreen() {
         return;
       }
 
-      if (rememberPassword) {
-        await saveRememberedCredentials({ usuario, contrasenia });
+      if (rememberUser) {
+        await saveRememberedCredentials({ usuario });
       } else {
         await clearRememberedCredentials();
       }
 
-      await registerSessionPushToken(session.token);
+      setFailedAttempts(0);
+      setLockedUntil(0);
+      await registerSessionPushToken(session.token, session.user.id_usuario);
       router.replace(homePath as never);
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');
+      const nextAttempts = failedAttempts + 1;
+      setFailedAttempts(nextAttempts);
+
+      if (nextAttempts >= MAX_LOGIN_ATTEMPTS) {
+        setLockedUntil(Date.now() + LOGIN_LOCK_MS);
+        setError('Demasiados intentos. Espera 60 segundos.');
+      } else {
+        setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');
+      }
     } finally {
       setLoading(false);
     }
@@ -163,6 +183,7 @@ export default function LoginScreen() {
               <TextInput
                 autoCapitalize="none"
                 autoCorrect={false}
+                maxLength={80}
                 onChangeText={setUsuario}
                 placeholder="Vuestro Usuario"
                 placeholderTextColor="#c8b9a0"
@@ -173,6 +194,9 @@ export default function LoginScreen() {
 
               <View style={styles.passwordRow}>
                 <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={128}
                   onChangeText={setContrasenia}
                   onSubmitEditing={handleLogin}
                   placeholder="Palabra Secreta"
@@ -198,13 +222,13 @@ export default function LoginScreen() {
 
               <Pressable
                 accessibilityRole="checkbox"
-                accessibilityState={{ checked: rememberPassword }}
-                onPress={() => setRememberPassword((checked) => !checked)}
+                accessibilityState={{ checked: rememberUser }}
+                onPress={() => setRememberUser((checked) => !checked)}
                 style={({ pressed }) => [styles.rememberRow, pressed && styles.rememberRowPressed]}>
-                <View style={[styles.checkbox, rememberPassword && styles.checkboxChecked]}>
-                  {rememberPassword ? <Text style={styles.checkboxMark}>x</Text> : null}
+                <View style={[styles.checkbox, rememberUser && styles.checkboxChecked]}>
+                  {rememberUser ? <Text style={styles.checkboxMark}>x</Text> : null}
                 </View>
-                <Text style={styles.rememberText}>Recordar contraseña</Text>
+                <Text style={styles.rememberText}>Recordar usuario</Text>
               </Pressable>
 
               {error ? (
