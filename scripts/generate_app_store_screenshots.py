@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,14 +156,14 @@ def login_screen():
     center_text(draw, 335, "Credencial, pagos y beneficios en una app", COLORS["sand"], F["subtitle"])
     rounded(draw, (150, 620, 1092, 1510), "#192342", COLORS["gold"], 3, 34)
     logo(draw, 521, 690, 200)
-    center_text(draw, 940, "Inicio de sesion seguro", COLORS["cream"], F["title"])
+    center_text(draw, 940, "Inicio de sesión seguro", COLORS["cream"], F["title"])
     rounded(draw, (230, 1060, 1012, 1140), "#2a355f", COLORS["gold"], 2, 18)
     text(draw, (260, 1082), "Usuario", COLORS["sand"], F["body"])
     rounded(draw, (230, 1180, 1012, 1260), "#2a355f", COLORS["gold"], 2, 18)
     text(draw, (260, 1202), "Contrasenia", COLORS["sand"], F["body"])
     rounded(draw, (230, 1320, 1012, 1410), COLORS["wine"], None, 1, 20)
     center_text(draw, 1342, "ADENTRARSE", COLORS["cream"], F["button"])
-    center_text(draw, 1815, "Protegido con sesion privada", COLORS["cream"], F["title"])
+    center_text(draw, 1815, "Protegido con sesión privada", COLORS["cream"], F["title"])
     return im
 
 
@@ -213,12 +213,12 @@ def payment_request_screen():
     text(draw, (235, 1030), "$287.50", COLORS["cream"], F["money"])
     pill(draw, (235, 1180, 600, 1265), "Rechazar", False)
     pill(draw, (645, 1180, 1010, 1265), "Aprobar", True)
-    center_text(draw, 1510, "Sin opcion de despues: decision clara", COLORS["ink"], F["title"])
+    center_text(draw, 1510, "Sin opción de después: decisión clara", COLORS["ink"], F["title"])
     return im
 
 
 def provider_charge_screen():
-    im, draw = app_frame("Nuevo cobro", "Escanea y envia notificacion")
+    im, draw = app_frame("Nuevo cobro", "Escanea y envía notificación")
     rounded(draw, (180, 600, 1062, 760), "#f9efd9", COLORS["gold"], 3, 22)
     text(draw, (230, 635), "Cliente", COLORS["wine"], F["label"])
     text(draw, (230, 685), "Maria Gonzalez", COLORS["ink"], F["body"])
@@ -306,3 +306,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

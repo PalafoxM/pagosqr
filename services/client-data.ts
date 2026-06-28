@@ -1,4 +1,4 @@
-import { AuthSession } from "@/services/auth";
+Ôªøimport { AuthSession } from "@/services/auth";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
@@ -52,18 +52,18 @@ const getString = (value: unknown) =>
 
 const decodeDisplayText = (value: unknown) => {
   const entities: Record<string, string> = {
-    aacute: "·",
-    eacute: "È",
-    iacute: "Ì",
-    oacute: "Û",
-    uacute: "˙",
-    ntilde: "Ò",
-    Aacute: "¡",
-    Eacute: "…",
-    Iacute: "Õ",
-    Oacute: "”",
-    Uacute: "⁄",
-    Ntilde: "—",
+    aacute: "√°",
+    eacute: "√©",
+    iacute: "√≠",
+    oacute: "√≥",
+    uacute: "√∫",
+    ntilde: "√±",
+    Aacute: "√Å",
+    Eacute: "√â",
+    Iacute: "√ç",
+    Oacute: "√ì",
+    Uacute: "√ö",
+    Ntilde: "√ë",
     amp: "&",
   };
 
@@ -137,7 +137,7 @@ async function fetchRows(
   const result = (await response.json()) as ApiListResponse;
 
   if (result.error) {
-    const message = result.respuesta || "La API devolvio un error.";
+    const message = result.respuesta || "La API devolvi√≥ un error.";
     logSaldo("getTabla error api", { table, message });
     throw new Error(message);
   }
@@ -174,7 +174,7 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
   const result = (await response.json()) as ApiListResponse;
 
   if (result.error) {
-    const message = result.respuesta || "La API devolvio un error.";
+    const message = result.respuesta || "La API devolvi√≥ un error.";
     logSaldo("GET error api", { path, message });
     throw new Error(message);
   }
@@ -221,7 +221,7 @@ export async function getClienteProfile(
     const responseUserId = getNumber(row.id_usuario);
     if (responseUserId !== session.user.id_usuario) {
       throw new Error(
-        `Respuesta de /cliente/profile sin id_usuario valido. Recibido: ${responseUserId || "vacio"}`,
+        `Respuesta de /cliente/profile sin id_usuario v√°lido. Recibido: ${responseUserId || "vac√≠o"}`,
       );
     }
 
@@ -350,8 +350,9 @@ export async function activateClienteQr(
   const result = (await response.json()) as ApiListResponse;
 
   if (result.error) {
-    throw new Error(result.respuesta || "No se pudo guardar la activacion QR.");
+    throw new Error(result.respuesta || "No se pudo guardar la activac√≠on QR.");
   }
 
   return result.data;
 }
+

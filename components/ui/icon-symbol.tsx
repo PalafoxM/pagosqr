@@ -25,6 +25,7 @@ const MAPPING = {
   'qrcode.viewfinder': 'qr-code-scanner',
   'creditcard.fill': 'credit-card',
   'checkmark.seal.fill': 'verified',
+  'arrow.clockwise': 'refresh',
 } as IconMapping;
 
 /**

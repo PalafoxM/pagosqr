@@ -1,4 +1,4 @@
-import Constants from "expo-constants";
+﻿import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
@@ -256,11 +256,11 @@ async function postAuthenticated<T>(
   try {
     result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
   } catch {
-    throw new Error(`La API devolvio una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+    throw new Error(`La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`);
   }
 
   if (result.error) {
-    throw new Error(result.respuesta || "La API devolvio un error.");
+    throw new Error(result.respuesta || "La API devolvió un error.");
   }
 
   return result.data as T;
@@ -286,11 +286,11 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
   try {
     result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
   } catch {
-    throw new Error(`La API devolvio una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+    throw new Error(`La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`);
   }
 
   if (result.error) {
-    throw new Error(result.respuesta || "La API devolvio un error.");
+    throw new Error(result.respuesta || "La API devolvió un error.");
   }
 
   return result.data as T;
@@ -439,7 +439,7 @@ export function observePaymentRequests(
     source: NotificationInteractionSource,
   ) => {
     const data = notification.request.content.data;
-    console.log("[notifications] notificacion recibida", data);
+    console.log("[notifications] notificación recibida", data);
 
     if (isPaymentRequestNotification(data)) {
       onPaymentRequest(data, source);
@@ -467,7 +467,7 @@ export function observePaymentRequests(
           }
 
           lastHandledResponseKey = responseKey;
-          console.log("[notifications] ultima respuesta de notificacion", response.notification.request.content.data);
+          console.log("[notifications] última respuesta de notificación", response.notification.request.content.data);
           showPaymentRequest(response.notification, "response");
         }
       });
@@ -531,7 +531,7 @@ export function observeBalanceUpdates(
     source: NotificationInteractionSource,
   ) => {
     const data = notification.request.content.data;
-    console.log("[notifications] notificacion saldo recibida", data);
+    console.log("[notifications] notificación saldo recibida", data);
 
     if (isBalanceUpdateNotification(data)) {
       onBalanceUpdate(data, source);
@@ -611,3 +611,4 @@ export async function rejectPaymentRequest(token: string, transactionId: string 
     transactionId,
   });
 }
+

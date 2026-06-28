@@ -103,7 +103,7 @@ export default function LoginScreen() {
     }
 
     if (!canSubmit) {
-      setError('Escribe usuario y contrasenia.');
+      setError('Escribe usuario y contraseña.');
       return;
     }
 
@@ -141,7 +141,7 @@ export default function LoginScreen() {
         setLockedUntil(Date.now() + LOGIN_LOCK_MS);
         setError('Demasiados intentos. Espera 60 segundos.');
       } else {
-        setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesion.');
+        setError(loginError instanceof Error ? loginError.message : 'No se pudo iniciar sesión.');
       }
     } finally {
       setLoading(false);
@@ -207,7 +207,7 @@ export default function LoginScreen() {
                 value={contrasenia}
               />
               <Pressable
-                accessibilityLabel={showPassword ? 'Ocultar contrasenia' : 'Ver contrasenia'}
+                accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
                 accessibilityRole="button"
                 hitSlop={10}
                 onPress={() => setShowPassword((visible) => !visible)}
@@ -250,7 +250,7 @@ export default function LoginScreen() {
                   <Text style={styles.buttonText}>Adentrarse</Text>
                 )}
               </Pressable>
-              <Text style={styles.version}>Version {APP_VERSION}</Text>
+              <Text style={styles.version}>Versión {APP_VERSION}</Text>
             </View>
           </ScrollView>
         </View>
@@ -408,3 +408,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+

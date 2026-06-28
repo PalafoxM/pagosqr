@@ -103,7 +103,7 @@ export default function HotelScreen() {
       const permission = await requestCameraPermission();
 
       if (!permission.granted) {
-        setError("Se necesita permiso de camara para escanear el QR.");
+        setError("Se necesita permiso de cámara para escanear el QR.");
         return;
       }
     }
@@ -120,7 +120,7 @@ export default function HotelScreen() {
 
   const handleCheckIn = async () => {
     if (!session || !parsedClient) {
-      setError("Escanea un QR de cliente valido para registrar check-in.");
+      setError("Escanea un QR de cliente válido para registrar check-in.");
       return;
     }
 
@@ -532,3 +532,4 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
 });
+

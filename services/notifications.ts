@@ -95,7 +95,7 @@ async function postAuthenticated<T>(
   const result = (await response.json()) as ApiResponse<T>;
 
   if (result.error) {
-    throw new Error(result.respuesta || "La API devolvio un error.");
+    throw new Error(result.respuesta || "La API devolvió un error.");
   }
 
   return result.data as T;

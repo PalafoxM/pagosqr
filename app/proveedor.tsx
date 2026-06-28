@@ -276,7 +276,7 @@ export default function ProveedorScreen() {
   };
   const handleCharge = async () => {
     if (!session || !canCharge) {
-      setError("Escanea un QR de cliente valido y completa establecimiento y monto.");
+      setError("Escanea un QR de cliente v谩lido y completa establecimiento y monto.");
       return;
     }
 
@@ -321,7 +321,7 @@ export default function ProveedorScreen() {
       const permission = await requestCameraPermission();
 
       if (!permission.granted) {
-        setError("Se necesita permiso de camara para escanear el QR.");
+        setError("Se necesita permiso de c谩mara para escanear el QR.");
         return;
       }
     }
@@ -355,7 +355,7 @@ export default function ProveedorScreen() {
               </Text>
             </View>
             <Pressable
-              accessibilityLabel="Cerrar sesi髇"
+              accessibilityLabel="Cerrar sesi贸n"
               accessibilityRole="button"
               onPress={handleLogout}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}>
@@ -418,13 +418,13 @@ export default function ProveedorScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   onChangeText={setQrCode}
-                  placeholder="Escanea o pega el c骴igo QR"
+                  placeholder="Escanea o pega el c贸digo QR"
                   placeholderTextColor="#9b876a"
                   style={[styles.input, styles.qrInput]}
                   value={parsedClient?.nombre_completo ?? qrCode}
                 />
                 <Pressable
-                  accessibilityLabel="Escanear c骴igo QR"
+                  accessibilityLabel="Escanear c贸digo QR"
                   accessibilityRole="button"
                   onPress={handleOpenScanner}
                   style={({ pressed }) => [styles.scanButton, pressed && styles.pressed]}>
@@ -461,7 +461,7 @@ export default function ProveedorScreen() {
                 <Pressable
                   onPress={() => setScannerOpen(false)}
                   style={({ pressed }) => [styles.closeScannerButton, pressed && styles.pressed]}>
-                  <Text style={styles.closeScannerText}>Cerrar escaner</Text>
+                  <Text style={styles.closeScannerText}>Cerrar esc谩ner</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -513,7 +513,7 @@ export default function ProveedorScreen() {
             </View>
 
             <View style={styles.field}>
-              <Text style={styles.label}>Descripcion</Text>
+              <Text style={styles.label}>Descripci贸n</Text>
               <TextInput
                 onChangeText={setDescription}
                 placeholder="Consumo en establecimiento"
@@ -532,7 +532,7 @@ export default function ProveedorScreen() {
                     styles.segmentText,
                     paymentMethod === "app" && styles.segmentTextActive,
                   ]}>
-                  Notificacion
+                  Notificaci贸n
                 </Text>
               </Pressable>
               <Pressable
@@ -554,14 +554,14 @@ export default function ProveedorScreen() {
                 <TextInput
                   keyboardType="number-pad"
                   onChangeText={handleNipChange}
-                  placeholder="4 digitos"
+                  placeholder="4 d铆gitos"
                   placeholderTextColor="#9b876a"
                   maxLength={4}
                   secureTextEntry
                   style={styles.input}
                   value={nip}
                 />
-                <Text style={styles.hintText}>Debe tener exactamente 4 digitos.</Text>
+                <Text style={styles.hintText}>Debe tener exactamente 4 d铆gitos.</Text>
               </View>
             ) : null}
 
@@ -593,9 +593,9 @@ export default function ProveedorScreen() {
                     {isPaymentApproved
                       ? "Realizado"
                       : isPaymentPending
-                        ? "Esperando aprobacion"
+                        ? "Esperando aprobaci贸n"
                         : paymentMethod === "app"
-                          ? "Enviar notificacion"
+                          ? "Enviar notificaci贸n"
                           : "Cobrar ahora"}
                   </Text>
                 </>
@@ -603,20 +603,21 @@ export default function ProveedorScreen() {
             </Pressable>
           </View>
 
-          <View style={styles.panel}>
-            <View style={styles.consumosHeader}>
+        {/*   <View style={styles.panel}>
+             <View style={styles.consumosHeader}>
               <View>
                 <Text style={styles.panelTitle}>Consumos de hoy</Text>
-                <Text style={styles.hintText}>Solo operaciones del dia actual.</Text>
+                <Text style={styles.hintText}>Solo operaciones del d铆a actual.</Text>
               </View>
               <Text style={styles.todayTotal}>${todayTotal.toFixed(2)}</Text>
-            </View>
+            </View> 
 
             {todayChargesLoading ? <ActivityIndicator color="#8f1d2c" /> : null}
             {todayChargesError ? <Text style={styles.error}>{todayChargesError}</Text> : null}
             {!todayChargesLoading && !todayChargesError && todayCharges.length === 0 ? (
               <Text style={styles.hintText}>Aun no hay consumos registrados hoy.</Text>
             ) : null}
+             
 
             {todayCharges.map((item, index) => (
               <View key={`${item.id || item.transaction_id || index}`} style={styles.consumoItem}>
@@ -629,7 +630,7 @@ export default function ProveedorScreen() {
                 <Text style={styles.consumoTotal}>${item.total.toFixed(2)}</Text>
               </View>
             ))}
-          </View>
+          </View> */}
           {result ? (
             <View style={[styles.resultPanel, isPaymentApproved && styles.resultPanelSuccess]}>
               <Text style={styles.resultTitle}>
@@ -1058,3 +1059,4 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+

@@ -1,4 +1,4 @@
-import * as SecureStore from "expo-secure-store";
+﻿import * as SecureStore from "expo-secure-store";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const SESSION_TOKEN_KEY = "pagosfic.session.token";
@@ -120,7 +120,7 @@ const sanitizeUsername = (value: string) => {
 
 const sanitizePassword = (value: string) => {
   if (!value || value.length > 128 || CONTROL_CHAR_PATTERN.test(value)) {
-    throw new Error("La contrasenia no tiene un formato valido.");
+    throw new Error("La contraseña no tiene un formato válido.");
   }
 
   return value;
@@ -175,13 +175,13 @@ export async function login(
   }
 
   if (result?.error) {
-    throw new Error("Usuario o contrasenia incorrectos.");
+    throw new Error("Usuario o contraseña incorrectos.");
   }
 
   const user = normalizeUser(result?.data?.[0]);
  
   if (!user.api_token) {
-    throw new Error("La API no devolvio token de sesion.");
+    throw new Error("La API no devolvió token de sesión.");
   }
 
   if (!ALLOWED_PROFILE_IDS.has(user.id_perfil)) {
@@ -312,3 +312,4 @@ export function getHomePathForProfile(profileId: number, providerTypeId = 0) {
 export function isAllowedProfile(profileId: number) {
   return ALLOWED_PROFILE_IDS.has(profileId);
 }
+

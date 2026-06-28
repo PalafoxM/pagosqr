@@ -163,6 +163,7 @@ export default function ClienteScreen() {
   const [activeTab, setActiveTab] = useState<ClienteTab>("datos");
   const [profile, setProfile] = useState<ClienteProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [establecimientos, setEstablecimientos] = useState<
     EstablecimientoFic[]
@@ -274,7 +275,7 @@ export default function ClienteScreen() {
         return;
       }
 
-      logClienteSaldo("sesion almacenada cargada", {
+      logClienteSaldo("sesión almacenada cargada", {
         id_usuario: storedSession.user.id_usuario,
         monto_sesion: storedSession.user.monto_deposito,
       });
@@ -407,7 +408,7 @@ export default function ClienteScreen() {
 
       if (!permission.granted) {
         setActivationError(
-          "Se necesita permiso de camara para fotografiar la credencial.",
+          "Se necesita permiso de cámara para fotografiar la credencial.",
         );
         return;
       }
@@ -449,7 +450,7 @@ export default function ClienteScreen() {
       setActivationError(
         captureError instanceof Error
           ? captureError.message
-          : "No se pudo tomar la fotografia.",
+          : "No se pudo tomar la fotografía.",
       );
     }
   }, [activationStep]);
@@ -482,14 +483,14 @@ export default function ClienteScreen() {
           firma: signature,
         });
         setActivationMessage(
-          "Documentos guardados correctamente. Tu activacion QR quedo en revision.",
+          "Documentos guardados correctamente. Tu activación QR quedó en revisión.",
         );
         resetActivation();
       } catch (activationSaveError) {
         setActivationError(
           activationSaveError instanceof Error
             ? activationSaveError.message
-            : "No se pudo guardar la activacion QR.",
+            : "No se pudo guardar la activación QR.",
         );
       } finally {
         setActivationLoading(false);
@@ -592,7 +593,7 @@ export default function ClienteScreen() {
         ? formatBalance(balanceUpdate.monto_deposito_hotel ?? balanceUpdate.hotel_balance)
         : currentProfile?.monto_deposito_hotel || activeSession.user.monto_deposito_hotel;
 
-      logClienteSaldo("saldo actualizado por notificacion", {
+      logClienteSaldo("saldo actualizado por notificación", {
         reason,
         monto_deposito: montoDeposito,
         monto_deposito_hotel: montoDepositoHotel,
@@ -808,6 +809,30 @@ export default function ClienteScreen() {
   const showFoodBalance = (profile?.tiene_alimentos ?? 1) === 1;
   const showHotelBalance = (profile?.tiene_hospedaje ?? 0) === 1;
   const qrActivo = Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
+  const refreshDisabled = manualRefreshing || profileLoading;
+
+  const handleRefreshScreen = useCallback(async () => {
+    const activeSession = sessionRef.current;
+
+    if (!activeSession || refreshDisabled) {
+      return;
+    }
+
+    setManualRefreshing(true);
+    setProfileError("");
+
+    try {
+      await refreshClienteProfile(activeSession);
+    } catch (refreshError) {
+      setProfileError(
+        refreshError instanceof Error
+          ? refreshError.message
+          : "No se pudo actualizar la pantalla.",
+      );
+    } finally {
+      setManualRefreshing(false);
+    }
+  }, [refreshDisabled, refreshClienteProfile]);
 
   return (
     <ScrollView
@@ -840,21 +865,40 @@ export default function ClienteScreen() {
                 de cuyo nombre no quiero acordarme...
               </Text>
             </View>
-            <Pressable
-              accessibilityLabel="Cerrar sesión"
-              accessibilityRole="button"
-              onPress={handleLogout}
-              style={({ pressed }) => [
-                styles.logoutButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <IconSymbol
-                color="#fff8e8"
-                name="rectangle.portrait.and.arrow.right"
-                size={22}
-              />
-            </Pressable>
+            <View style={styles.bannerActions}>
+              <Pressable
+                accessibilityLabel="Refrescar pantalla"
+                accessibilityRole="button"
+                disabled={refreshDisabled}
+                onPress={handleRefreshScreen}
+                style={({ pressed }) => [
+                  styles.headerIconButton,
+                  refreshDisabled && styles.headerIconButtonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {manualRefreshing ? (
+                  <ActivityIndicator color="#fff8e8" size="small" />
+                ) : (
+                  <IconSymbol color="#fff8e8" name="arrow.clockwise" size={22} />
+                )}
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Cerrar sesión"
+                accessibilityRole="button"
+                onPress={handleLogout}
+                style={({ pressed }) => [
+                  styles.headerIconButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <IconSymbol
+                  color="#fff8e8"
+                  name="rectangle.portrait.and.arrow.right"
+                  size={22}
+                />
+              </Pressable>
+            </View>
           </View>
 
           <View style={styles.tabBar}>
@@ -1193,7 +1237,7 @@ export default function ClienteScreen() {
                           setSignatureScrollLocked(false);
                           setActivationLoading(false);
                           setSignatureImage("");
-                          setActivationError("Firma con tu dedo antes de guardar la activacion.");
+                          setActivationError("Firma con tu dedo antes de guardar la activación.");
                         }}
                         onEnd={() => {
                           setSignatureScrollLocked(false);
@@ -1260,7 +1304,7 @@ export default function ClienteScreen() {
                           <ActivityIndicator color="#fff8e8" />
                         ) : (
                           <Text style={styles.activationPrimaryButtonText}>
-                            Guardar activacion
+                            Guardar activación
                           </Text>
                         )}
                       </Pressable>
@@ -1332,7 +1376,10 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 16,
   },
-  logoutButton: {
+  bannerActions: {
+    gap: 8,
+  },
+  headerIconButton: {
     alignItems: "center",
     backgroundColor: "#8f1d2c",
     borderColor: "#d5a84f",
@@ -1341,6 +1388,9 @@ const styles = StyleSheet.create({
     height: 42,
     justifyContent: "center",
     width: 42,
+  },
+  headerIconButtonDisabled: {
+    opacity: 0.62,
   },
   pressed: {
     opacity: 0.72,
@@ -1851,3 +1901,4 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+

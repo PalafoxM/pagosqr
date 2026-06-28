@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,7 +130,7 @@ def login_screen():
     center_text(draw, 370, "Credencial, pagos y beneficios para iPad", COLORS["sand"], F["subtitle"])
     rounded(draw, (330, 690, 1718, 1620), "#192342", COLORS["gold"], 4, 38)
     logo(draw, 894, 780, 260)
-    center_text(draw, 1115, "Inicio de sesion seguro", COLORS["cream"], F["title"])
+    center_text(draw, 1115, "Inicio de sesión seguro", COLORS["cream"], F["title"])
     for i, label in enumerate(["Usuario", "Contrasenia"]):
         y = 1245 + i * 130
         rounded(draw, (470, y, 1578, y + 86), "#2a355f", COLORS["gold"], 2, 18)
@@ -273,3 +273,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

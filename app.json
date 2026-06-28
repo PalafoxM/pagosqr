@@ -1,4 +1,4 @@
-{
+﻿{
   "expo": {
     "name": "pagosFIC54",
     "slug": "pagosFIC54",
@@ -52,7 +52,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Permitir que Pagos FIC use la camara para fotografiar la credencial y escanear codigos QR.",
+          "cameraPermission": "Permitir que Pagos FIC use la cámara para fotografiar la credencial y escanear códigos QR.",
           "recordAudioAndroid": false
         }
       ]
@@ -70,3 +70,4 @@
     "owner": "agustinmarin"
   }
 }
+
