@@ -175,7 +175,7 @@ export default function HotelScreen() {
               </Text>
             </View>
             <Pressable
-              accessibilityLabel="Cerrar sesión"
+              accessibilityLabel="Cerrar sesiÃ³n"
               accessibilityRole="button"
               onPress={handleLogout}
               style={({ pressed }) => [styles.iconButton, pressed && styles.pressed]}
@@ -208,13 +208,13 @@ export default function HotelScreen() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   onChangeText={setQrCode}
-                  placeholder="Escanea o pega el código QR"
+                  placeholder="Escanea el cÃ³digo QR"
                   placeholderTextColor="#9b876a"
                   style={[styles.input, styles.qrInput]}
                   value={parsedClient?.nombre_completo ?? qrCode}
                 />
                 <Pressable
-                  accessibilityLabel="Escanear código QR"
+                  accessibilityLabel="Escanear cÃ³digo QR"
                   accessibilityRole="button"
                   onPress={handleOpenScanner}
                   style={({ pressed }) => [styles.scanButton, pressed && styles.pressed]}

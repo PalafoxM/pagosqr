@@ -19,8 +19,10 @@ import {
   createProviderCharge,
   getProviderChargeStatus,
   getProviderEstablecimientos,
+  getProviderTodayCharges,
   PaymentMethod,
   ProviderEstablecimiento,
+  ProviderTodayCharge,
 } from "@/services/provider-data";
 
 const TIP_PERCENTAGES = [0, 5, 10, 15];
@@ -61,6 +63,9 @@ export default function ProveedorScreen() {
   const [establecimientos, setEstablecimientos] = useState<ProviderEstablecimiento[]>([]);
   const [selectedEstablecimientoId, setSelectedEstablecimientoId] = useState(0);
   const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
+  const [todayCharges, setTodayCharges] = useState<ProviderTodayCharge[]>([]);
+  const [todayChargesLoading, setTodayChargesLoading] = useState(false);
+  const [todayChargesError, setTodayChargesError] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [amount, setAmount] = useState("");
   const [tipPercentage, setTipPercentage] = useState(0);
@@ -153,12 +158,52 @@ export default function ProveedorScreen() {
     };
   }, [selectedEstablecimientoId, session]);
 
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    let mounted = true;
+    const providerRef = session.user.no_proveedor || session.user.id_usuario;
+
+    setTodayChargesLoading(true);
+    setTodayChargesError("");
+    getProviderTodayCharges(session.token, providerRef, selectedEstablecimientoId || undefined)
+      .then((items) => {
+        if (mounted) {
+          setTodayCharges(items);
+        }
+      })
+      .catch((chargesError) => {
+        if (mounted) {
+          setTodayCharges([]);
+          setTodayChargesError(
+            chargesError instanceof Error
+              ? chargesError.message
+              : "No se pudieron consultar los consumos de hoy.",
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setTodayChargesLoading(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [selectedEstablecimientoId, session]);
   const subtotal = useMemo(() => moneyFromText(amount), [amount]);
   const tipAmount = useMemo(
     () => Number(((subtotal * tipPercentage) / 100).toFixed(2)),
     [subtotal, tipPercentage],
   );
   const total = subtotal + tipAmount;
+  const todayTotal = useMemo(
+    () => todayCharges.reduce((sum, item) => sum + item.total, 0),
+    [todayCharges],
+  );
   const selectedEstablecimiento = establecimientos.find(
     (item) => Number(item.id_establecimiento) === selectedEstablecimientoId,
   );
@@ -168,7 +213,7 @@ export default function ProveedorScreen() {
     subtotal > 0 &&
     selectedEstablecimientoId > 0 &&
     !submitting &&
-    (paymentMethod === "app" || nip.trim().length > 0);
+    (paymentMethod === "app" || /^\d{4}$/.test(nip.trim()));
   const isPaymentApproved = result?.status === "approved";
   const isPaymentPending = result?.status === "pending";
 
@@ -226,6 +271,9 @@ export default function ProveedorScreen() {
     };
   }, [result, session]);
 
+  const handleNipChange = (value: string) => {
+    setNip(value.replace(/\D/g, "").slice(0, 4));
+  };
   const handleCharge = async () => {
     if (!session || !canCharge) {
       setError("Escanea un QR de cliente valido y completa establecimiento y monto.");
@@ -254,6 +302,11 @@ export default function ProveedorScreen() {
       setAmount("");
       setTipPercentage(0);
       setNip("");
+
+      const providerRef = session.user.no_proveedor || session.user.id_usuario;
+      getProviderTodayCharges(session.token, providerRef, selectedEstablecimientoId || undefined)
+        .then(setTodayCharges)
+        .catch(() => {});
     } catch (chargeError) {
       setError(chargeError instanceof Error ? chargeError.message : "No se pudo realizar el cobro.");
     } finally {
@@ -500,13 +553,15 @@ export default function ProveedorScreen() {
                 <Text style={styles.label}>NIP del cliente</Text>
                 <TextInput
                   keyboardType="number-pad"
-                  onChangeText={setNip}
-                  placeholder="NIP"
+                  onChangeText={handleNipChange}
+                  placeholder="4 digitos"
                   placeholderTextColor="#9b876a"
+                  maxLength={4}
                   secureTextEntry
                   style={styles.input}
                   value={nip}
                 />
+                <Text style={styles.hintText}>Debe tener exactamente 4 digitos.</Text>
               </View>
             ) : null}
 
@@ -548,6 +603,33 @@ export default function ProveedorScreen() {
             </Pressable>
           </View>
 
+          <View style={styles.panel}>
+            <View style={styles.consumosHeader}>
+              <View>
+                <Text style={styles.panelTitle}>Consumos de hoy</Text>
+                <Text style={styles.hintText}>Solo operaciones del dia actual.</Text>
+              </View>
+              <Text style={styles.todayTotal}>${todayTotal.toFixed(2)}</Text>
+            </View>
+
+            {todayChargesLoading ? <ActivityIndicator color="#8f1d2c" /> : null}
+            {todayChargesError ? <Text style={styles.error}>{todayChargesError}</Text> : null}
+            {!todayChargesLoading && !todayChargesError && todayCharges.length === 0 ? (
+              <Text style={styles.hintText}>Aun no hay consumos registrados hoy.</Text>
+            ) : null}
+
+            {todayCharges.map((item, index) => (
+              <View key={`${item.id || item.transaction_id || index}`} style={styles.consumoItem}>
+                <View style={styles.consumoInfo}>
+                  <Text style={styles.consumoTitle}>{item.cliente || "Cliente"}</Text>
+                  <Text style={styles.consumoMeta}>
+                    {item.transaction_id || "Sin folio"} - {item.status}
+                  </Text>
+                </View>
+                <Text style={styles.consumoTotal}>${item.total.toFixed(2)}</Text>
+              </View>
+            ))}
+          </View>
           {result ? (
             <View style={[styles.resultPanel, isPaymentApproved && styles.resultPanelSuccess]}>
               <Text style={styles.resultTitle}>
@@ -904,6 +986,47 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: "#fff8e8",
+    fontSize: 16,
+    fontWeight: "900",
+  },
+  consumosHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+  },
+  todayTotal: {
+    color: "#8f1d2c",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  consumoItem: {
+    alignItems: "center",
+    backgroundColor: "#f9efd9",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 12,
+    justifyContent: "space-between",
+    padding: 12,
+  },
+  consumoInfo: {
+    flex: 1,
+    gap: 4,
+  },
+  consumoTitle: {
+    color: "#24160f",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  consumoMeta: {
+    color: "#6f5639",
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  consumoTotal: {
+    color: "#24160f",
     fontSize: 16,
     fontWeight: "900",
   },
