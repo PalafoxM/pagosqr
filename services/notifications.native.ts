@@ -396,8 +396,7 @@ export async function registerPushToken(token: string, userId?: number) {
     storedRegistration.platform === Platform.OS &&
     storedRegistration.userId === (userId || 0)
   ) {
-    console.log("[notifications] push token ya registrado para este usuario");
-    return expoPushToken;
+    console.log("[notifications] push token coincide con cache local; revalidando en backend");
   }
 
   await savePushToken(token, expoPushToken, userId);
