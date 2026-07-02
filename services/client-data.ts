@@ -1,4 +1,4 @@
-﻿import { AuthSession } from "@/services/auth";
+import { AuthSession } from "@/services/auth";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
@@ -249,7 +249,7 @@ export async function getClienteProfile(
     );
     const profileRows = await fetchRows(
       "vw_usuario",
-      { id_usuario: session.user.id_usuario, id_perfil: 3 },
+      { id_usuario: session.user.id_usuario, id_perfil: session.user.id_perfil },
       session.token,
     );
 

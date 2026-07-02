@@ -21,6 +21,7 @@ import {
   AuthSession,
   clearSession,
   getStoredSession,
+  isClientProfile,
   saveSession,
 } from "@/services/auth";
 import {
@@ -269,7 +270,7 @@ export default function ClienteScreen() {
         return;
       }
 
-      if (!storedSession || storedSession.user.id_perfil !== 3) {
+      if (!storedSession || !isClientProfile(storedSession.user.id_perfil)) {
         clearSession();
         router.replace("/");
         return;

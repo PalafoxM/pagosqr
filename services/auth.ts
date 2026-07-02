@@ -1,10 +1,9 @@
-﻿import * as SecureStore from "expo-secure-store";
+import * as SecureStore from "expo-secure-store";
 
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const SESSION_TOKEN_KEY = "pagosfic.session.token";
 const SESSION_USER_KEY = "pagosfic.session.user";
 const REMEMBERED_CREDENTIALS_KEY = "pagosfic.remembered.credentials";
-const ALLOWED_PROFILE_IDS = new Set([2, 3]);
 
 export type AuthUser = {
   id_usuario: number;
@@ -184,7 +183,7 @@ export async function login(
     throw new Error("La API no devolvió token de sesión.");
   }
 
-  if (!ALLOWED_PROFILE_IDS.has(user.id_perfil)) {
+  if (!isAllowedProfile(user.id_perfil)) {
     throw new Error("Este usuario no tiene permiso para entrar a la app.");
   }
 
@@ -294,15 +293,19 @@ export async function clearSession() {
 }
 
 export function getHomePathForProfile(profileId: number, providerTypeId = 0) {
-  if (profileId === 2) {
-    if (providerTypeId === 2 || providerTypeId === 3) {
+  if (isProviderProfile(profileId)) {
+    if (isHotelProviderType(providerTypeId)) {
       return "/hotel";
     }
 
-    return "/proveedor";
+    if (isFoodProviderType(providerTypeId)) {
+      return "/proveedor";
+    }
+
+    return null;
   }
 
-  if (profileId === 3) {
+  if (isClientProfile(profileId)) {
     return "/cliente";
   }
 
@@ -310,6 +313,22 @@ export function getHomePathForProfile(profileId: number, providerTypeId = 0) {
 }
 
 export function isAllowedProfile(profileId: number) {
-  return ALLOWED_PROFILE_IDS.has(profileId);
+  return getNumber(profileId) > 0;
+}
+
+export function isClientProfile(profileId: number) {
+  return isAllowedProfile(profileId) && getNumber(profileId) !== 2;
+}
+
+export function isProviderProfile(profileId: number) {
+  return getNumber(profileId) === 2;
+}
+
+export function isHotelProviderType(providerTypeId: number) {
+  return providerTypeId === 2 || providerTypeId === 3;
+}
+
+export function isFoodProviderType(providerTypeId: number) {
+  return providerTypeId === 1;
 }
 

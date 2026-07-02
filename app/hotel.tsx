@@ -12,7 +12,13 @@ import {
 } from "react-native";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
+import {
+  AuthSession,
+  clearSession,
+  getStoredSession,
+  isHotelProviderType,
+  isProviderProfile,
+} from "@/services/auth";
 import {
   createHotelCheckIn,
   HotelCheckInResult,
@@ -21,8 +27,11 @@ import {
 import { registerPushToken } from "@/services/notifications";
 
 const isHotelUser = (session: AuthSession | null) =>
-  session?.user.id_perfil === 2 &&
-  (session.user.id_tipo_proveedor === 2 || session.user.id_tipo_proveedor === 3);
+  Boolean(
+    session &&
+      isProviderProfile(session.user.id_perfil) &&
+      isHotelProviderType(session.user.id_tipo_proveedor),
+  );
 
 const formatCheckInDate = (value: string | undefined) => {
   if (!value) {

@@ -27,7 +27,7 @@ import {
 } from '@/services/auth';
 import { registerPushToken } from '@/services/notifications';
 
-const APP_VERSION = Constants.expoConfig?.version || '1.0.0';
+const APP_VERSION = Constants.expoConfig?.version || '2.0';
 const MAX_LOGIN_ATTEMPTS = 5;
 const LOGIN_LOCK_MS = 60000;
 

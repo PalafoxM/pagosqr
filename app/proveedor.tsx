@@ -12,7 +12,14 @@ import {
 } from "react-native";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
-import { AuthSession, clearSession, getStoredSession } from "@/services/auth";
+import {
+  AuthSession,
+  clearSession,
+  getStoredSession,
+  isFoodProviderType,
+  isHotelProviderType,
+  isProviderProfile,
+} from "@/services/auth";
 import { registerPushToken } from "@/services/notifications";
 import {
   ChargeResult,
@@ -26,6 +33,8 @@ import {
 } from "@/services/provider-data";
 
 const TIP_PERCENTAGES = [0, 5, 10, 15];
+const isQrClientProfile = (profileId?: number) =>
+  Number(profileId) > 0 && Number(profileId) !== 2;
 
 const moneyFromText = (value: string) => {
   const normalized = value.replace(",", ".").trim();
@@ -44,7 +53,7 @@ const parseClientQrPayload = (value: string) => {
 
     if (
       payload.tipo === "PAGOS_FIC_CLIENTE" &&
-      Number(payload.id_perfil) === 3 &&
+      isQrClientProfile(Number(payload.id_perfil)) &&
       Number(payload.id_usuario) > 0
     ) {
       return {
@@ -87,17 +96,20 @@ export default function ProveedorScreen() {
         return;
       }
 
-      if (!storedSession || storedSession.user.id_perfil !== 2) {
+      if (!storedSession || !isProviderProfile(storedSession.user.id_perfil)) {
         clearSession();
         router.replace("/");
         return;
       }
 
-      if (
-        storedSession.user.id_tipo_proveedor === 2 ||
-        storedSession.user.id_tipo_proveedor === 3
-      ) {
+      if (isHotelProviderType(storedSession.user.id_tipo_proveedor)) {
         router.replace("/hotel" as never);
+        return;
+      }
+
+      if (!isFoodProviderType(storedSession.user.id_tipo_proveedor)) {
+        clearSession();
+        router.replace("/");
         return;
       }
 

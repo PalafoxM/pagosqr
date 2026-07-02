@@ -21,6 +21,9 @@ export type HotelCheckInResult = {
   tarifa_noche?: number | string;
 };
 
+const isQrClientProfile = (profileId?: number) =>
+  Number(profileId) > 0 && Number(profileId) !== 2;
+
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {
     throw new Error("No esta configurado EXPO_PUBLIC_API_BASE_URL.");
@@ -41,7 +44,7 @@ export const parseHotelClientQrPayload = (value: string): HotelClientQr | null =
 
     if (
       payload.tipo === "PAGOS_FIC_CLIENTE" &&
-      Number(payload.id_perfil) === 3 &&
+      isQrClientProfile(Number(payload.id_perfil)) &&
       Number(payload.id_usuario) > 0
     ) {
       return {
