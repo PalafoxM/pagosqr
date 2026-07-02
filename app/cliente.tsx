@@ -11,6 +11,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import QRCode from "react-native-qrcode-svg";
@@ -63,6 +64,13 @@ const formatBalance = (value: unknown) => Number(value || 0).toFixed(2);
 const logClienteSaldo = (message: string, details?: Record<string, unknown>) => {
   console.log(`[cliente:saldo] ${message}`, details || {});
 };
+
+const normalizeSearchText = (value: unknown) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 
 const mergeSessionWithProfile = (
   currentSession: AuthSession,
@@ -169,6 +177,7 @@ export default function ClienteScreen() {
   const [establecimientos, setEstablecimientos] = useState<
     EstablecimientoFic[]
   >([]);
+  const [establecimientosSearch, setEstablecimientosSearch] = useState("");
   const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
   const [establecimientosError, setEstablecimientosError] = useState("");
   const [paymentRequest, setPaymentRequest] =
@@ -800,15 +809,21 @@ export default function ClienteScreen() {
       : profileLoading
         ? null
         : "0";
-  const displayedHotelBalance =
-    profile?.monto_deposito_hotel !== undefined &&
-    profile.monto_deposito_hotel !== ""
-      ? profile.monto_deposito_hotel
-      : profileLoading
-        ? null
-        : "0";
-  const showFoodBalance = (profile?.tiene_alimentos ?? 1) === 1;
-  const showHotelBalance = (profile?.tiene_hospedaje ?? 0) === 1;
+  const filteredEstablecimientos = useMemo(() => {
+    const searchTerm = normalizeSearchText(establecimientosSearch);
+
+    if (!searchTerm) {
+      return establecimientos;
+    }
+
+    return establecimientos.filter((item) =>
+      [
+        item.dsc_establecimiento,
+        item.ubicacion,
+        item.direccion,
+      ].some((value) => normalizeSearchText(value).includes(searchTerm)),
+    );
+  }, [establecimientos, establecimientosSearch]);
   const qrActivo = Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
   const refreshDisabled = manualRefreshing || profileLoading;
 
@@ -979,39 +994,14 @@ export default function ClienteScreen() {
           {activeTab === "datos" ? (
             <View style={styles.panel}>
               <View style={styles.balanceGrid}>
-                {showFoodBalance ? (
-                  <View style={styles.balancePanel}>
-                    <Text style={styles.balanceLabel}>Saldo disponible</Text>
-                    <Text style={styles.balanceValue}>
-                      {displayedBalance === null
-                        ? "Consultando..."
-                        : `$${formatBalance(displayedBalance)}`}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {showHotelBalance ? (
-                  <View style={styles.balancePanel}>
-                    <Text style={styles.balanceLabel}>Saldo hospedaje</Text>
-                    <Text style={styles.balanceValue}>
-                      {displayedHotelBalance === null
-                        ? "Consultando..."
-                        : `$${formatBalance(displayedHotelBalance)}`}
-                    </Text>
-                    <Text style={styles.balanceHint}>
-                      Tarifa noche: ${formatBalance(profile?.tarifa_noche)}
-                    </Text>
-                  </View>
-                ) : null}
-
-                {!showFoodBalance && !showHotelBalance ? (
-                  <View style={styles.balancePanel}>
-                    <Text style={styles.balanceLabel}>Saldos</Text>
-                    <Text style={styles.balanceHint}>
-                      No hay beneficios activos para esta cuenta.
-                    </Text>
-                  </View>
-                ) : null}
+                <View style={styles.balancePanel}>
+                  <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                  <Text style={styles.balanceValue}>
+                    {displayedBalance === null
+                      ? "Consultando..."
+                      : `$${formatBalance(displayedBalance)}`}
+                  </Text>
+                </View>
               </View>
 
               <View style={styles.qrBox}>
@@ -1047,6 +1037,18 @@ export default function ClienteScreen() {
 
           {activeTab === "establecimientos" ? (
             <View style={styles.panel}>
+              <TextInput
+                accessibilityLabel="Buscar establecimiento FIC"
+                autoCapitalize="none"
+                autoCorrect={false}
+                clearButtonMode="while-editing"
+                onChangeText={setEstablecimientosSearch}
+                placeholder="Buscar establecimiento"
+                placeholderTextColor="#9b876a"
+                style={styles.searchInput}
+                value={establecimientosSearch}
+              />
+
               {establecimientosLoading ? (
                 <ActivityIndicator color="#0f766e" />
               ) : null}
@@ -1063,7 +1065,16 @@ export default function ClienteScreen() {
                 </Text>
               ) : null}
 
-              {establecimientos.map((item, index) => (
+              {!establecimientosLoading &&
+              !establecimientosError &&
+              establecimientos.length > 0 &&
+              filteredEstablecimientos.length === 0 ? (
+                <Text style={styles.emptyText}>
+                  No se encontraron establecimientos con esa búsqueda.
+                </Text>
+              ) : null}
+
+              {filteredEstablecimientos.map((item, index) => (
                 <View
                   key={`${item.id_establecimiento || item.dsc_establecimiento}-${index}`}
                   style={styles.establecimientoItem}
@@ -1630,6 +1641,16 @@ const styles = StyleSheet.create({
     color: "#6f5639",
     fontSize: 15,
     lineHeight: 22,
+  },
+  searchInput: {
+    backgroundColor: "#fff8e8",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    color: "#24160f",
+    fontSize: 16,
+    minHeight: 46,
+    paddingHorizontal: 14,
   },
   establecimientoItem: {
     backgroundColor: "#f9efd9",
