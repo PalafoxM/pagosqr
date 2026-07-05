@@ -193,6 +193,9 @@ export default function ClienteScreen() {
   const [ineBack, setIneBack] = useState("");
   const [signatureImage, setSignatureImage] = useState("");
   const [signatureScrollLocked, setSignatureScrollLocked] = useState(false);
+  const [activationCaptureLoading, setActivationCaptureLoading] = useState(false);
+  const [activationCameraActive, setActivationCameraActive] = useState(false);
+  const [activationCameraReady, setActivationCameraReady] = useState(false);
   const [activationLoading, setActivationLoading] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [activationError, setActivationError] = useState("");
@@ -270,6 +273,19 @@ export default function ClienteScreen() {
   useEffect(() => {
     paymentRequestRef.current = paymentRequest;
   }, [paymentRequest]);
+
+  useEffect(() => {
+    const isCameraStep = activationStep === "front" || activationStep === "back";
+
+    setActivationCameraReady(false);
+    setActivationCameraActive(isCameraStep);
+
+    return () => {
+      if (isCameraStep) {
+        setActivationCameraActive(false);
+      }
+    };
+  }, [activationStep]);
 
   useEffect(() => {
     let mounted = true;
@@ -391,6 +407,9 @@ export default function ClienteScreen() {
 
   const resetActivation = useCallback(() => {
     setActivationStep("idle");
+    setActivationCaptureLoading(false);
+    setActivationCameraActive(false);
+    setActivationCameraReady(false);
     setIneFront("");
     setIneBack("");
     setSignatureImage("");
@@ -427,23 +446,38 @@ export default function ClienteScreen() {
     setIneFront("");
     setIneBack("");
     setSignatureImage("");
+    setActivationCaptureLoading(false);
+    setActivationCameraReady(false);
     setActivationStep("front");
   }, [cameraPermission?.granted, requestCameraPermission]);
 
   const handleCaptureIne = useCallback(async () => {
-    if (!cameraRef.current || !["front", "back"].includes(activationStep)) {
+    if (
+      activationCaptureLoading ||
+      !activationCameraReady ||
+      !cameraRef.current ||
+      !["front", "back"].includes(activationStep)
+    ) {
       return;
     }
 
+    setActivationCaptureLoading(true);
     setActivationError("");
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.55,
-        skipProcessing: true,
+        quality: 0.35,
+        skipProcessing: false,
       });
+
+      if (!photo.base64) {
+        throw new Error("La cámara no devolvió imagen. Intenta de nuevo.");
+      }
+
       const imageData = `data:image/jpeg;base64,${photo.base64}`;
+      setActivationCameraActive(false);
+      setActivationCameraReady(false);
 
       if (activationStep === "front") {
         setIneFront(imageData);
@@ -462,8 +496,11 @@ export default function ClienteScreen() {
           ? captureError.message
           : "No se pudo tomar la fotografía.",
       );
+      setActivationCameraActive(true);
+    } finally {
+      setActivationCaptureLoading(false);
     }
-  }, [activationStep]);
+  }, [activationCameraReady, activationCaptureLoading, activationStep]);
 
   const saveActivationWithSignature = useCallback(
     async (signature: string) => {
@@ -1162,10 +1199,19 @@ export default function ClienteScreen() {
                     </Text>
                     <View style={styles.activationCameraShell}>
                       <CameraView
+                        key={activationStep}
                         ref={cameraRef}
-                        active
-                        animateShutter
+                        active={activationCameraActive}
+                        animateShutter={!activationCaptureLoading}
                         facing="back"
+                        onCameraReady={() => setActivationCameraReady(true)}
+                        onMountError={(cameraError) => {
+                          setActivationCameraActive(false);
+                          setActivationError(
+                            cameraError?.message ||
+                              "No se pudo iniciar la cámara. Cierra este panel e intenta de nuevo.",
+                          );
+                        }}
                         style={styles.activationCamera}
                       />
                       <View pointerEvents="none" style={styles.ineOverlay}>
@@ -1204,14 +1250,23 @@ export default function ClienteScreen() {
                         </Text>
                       </Pressable>
                       <Pressable
+                        disabled={activationCaptureLoading || !activationCameraReady}
                         onPress={handleCaptureIne}
-                        style={styles.activationPrimaryButton}
+                        style={[
+                          styles.activationPrimaryButton,
+                          (activationCaptureLoading || !activationCameraReady) &&
+                            styles.mapButtonDisabled,
+                        ]}
                       >
-                        <Text style={styles.activationPrimaryButtonText}>
-                          {activationStep === "front"
-                            ? "Tomar frente"
-                            : "Tomar reverso"}
-                        </Text>
+                        {activationCaptureLoading ? (
+                          <ActivityIndicator color="#fff8e8" />
+                        ) : (
+                          <Text style={styles.activationPrimaryButtonText}>
+                            {activationStep === "front"
+                              ? "Tomar frente"
+                              : "Tomar reverso"}
+                          </Text>
+                        )}
                       </Pressable>
                     </View>
                   </View>
@@ -1923,4 +1978,5 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
 });
+
 
