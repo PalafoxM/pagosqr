@@ -40,16 +40,38 @@ export const parseHotelClientQrPayload = (value: string): HotelClientQr | null =
       id_usuario?: number;
       id_perfil?: number;
       nombre_completo?: string;
+      nombre?: string;
+      primer_apellido?: string;
+      segundo_apellido?: string;
+      usuario?: string;
     };
+    const userId = Number(payload.id_usuario);
+    const fullName =
+      String(payload.nombre_completo || "").trim() ||
+      [payload.nombre, payload.primer_apellido, payload.segundo_apellido]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join(" ") ||
+      String(payload.usuario || "").trim();
 
     if (
       payload.tipo === "PAGOS_FIC_CLIENTE" &&
       isQrClientProfile(Number(payload.id_perfil)) &&
-      Number(payload.id_usuario) > 0
+      userId > 0
     ) {
       return {
-        id_usuario: Number(payload.id_usuario),
-        nombre_completo: String(payload.nombre_completo || ""),
+        id_usuario: userId,
+        nombre_completo: fullName,
+      };
+    }
+
+    if (
+      payload.tipo === "usuario_institucional" &&
+      userId > 0
+    ) {
+      return {
+        id_usuario: userId,
+        nombre_completo: fullName,
       };
     }
   } catch {}

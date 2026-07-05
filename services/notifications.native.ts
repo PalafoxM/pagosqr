@@ -338,7 +338,7 @@ export async function registerPushToken(token: string, userId?: number) {
       name: "Pagos FIC",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
-      lightColor: "#8f1d2c",
+      lightColor: "#CD1125",
     });
   }
 

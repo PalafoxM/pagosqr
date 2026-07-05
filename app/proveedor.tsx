@@ -49,16 +49,38 @@ const parseClientQrPayload = (value: string) => {
       id_usuario?: number;
       id_perfil?: number;
       nombre_completo?: string;
+      nombre?: string;
+      primer_apellido?: string;
+      segundo_apellido?: string;
+      usuario?: string;
     };
+    const userId = Number(payload.id_usuario);
+    const fullName =
+      String(payload.nombre_completo || "").trim() ||
+      [payload.nombre, payload.primer_apellido, payload.segundo_apellido]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join(" ") ||
+      String(payload.usuario || "").trim();
 
     if (
       payload.tipo === "PAGOS_FIC_CLIENTE" &&
       isQrClientProfile(Number(payload.id_perfil)) &&
-      Number(payload.id_usuario) > 0
+      userId > 0
     ) {
       return {
-        id_usuario: Number(payload.id_usuario),
-        nombre_completo: String(payload.nombre_completo || ""),
+        id_usuario: userId,
+        nombre_completo: fullName,
+      };
+    }
+
+    if (
+      payload.tipo === "usuario_institucional" &&
+      userId > 0
+    ) {
+      return {
+        id_usuario: userId,
+        nombre_completo: fullName,
       };
     }
   } catch {}
@@ -393,7 +415,7 @@ export default function ProveedorScreen() {
 
             <View style={styles.field}>
               <Text style={styles.label}>Establecimiento</Text>
-              {establecimientosLoading ? <ActivityIndicator color="#8f1d2c" /> : null}
+              {establecimientosLoading ? <ActivityIndicator color="#CD1125" /> : null}
               <View style={styles.establishmentList}>
                 {establecimientos.length > 0 ? (
                   establecimientos.map((item) => {
@@ -624,7 +646,7 @@ export default function ProveedorScreen() {
               <Text style={styles.todayTotal}>${todayTotal.toFixed(2)}</Text>
             </View> 
 
-            {todayChargesLoading ? <ActivityIndicator color="#8f1d2c" /> : null}
+            {todayChargesLoading ? <ActivityIndicator color="#CD1125" /> : null}
             {todayChargesError ? <Text style={styles.error}>{todayChargesError}</Text> : null}
             {!todayChargesLoading && !todayChargesError && todayCharges.length === 0 ? (
               <Text style={styles.hintText}>Aun no hay consumos registrados hoy.</Text>
@@ -686,7 +708,7 @@ const styles = StyleSheet.create({
   },
   medallion: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 34,
     borderWidth: 3,
@@ -699,7 +721,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   kicker: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -716,7 +738,7 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 8,
     borderWidth: 1,
@@ -742,7 +764,7 @@ const styles = StyleSheet.create({
   newChargeButton: {
     alignItems: "center",
     alignSelf: "flex-start",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderRadius: 8,
     borderWidth: 1,
@@ -764,7 +786,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   label: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -865,8 +887,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   establishmentPillActive: {
-    backgroundColor: "#8f1d2c",
-    borderColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
+    borderColor: "#CD1125",
   },
   establishmentPillText: {
     color: "#3b2619",
@@ -913,8 +935,8 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   tipPercentageButtonActive: {
-    backgroundColor: "#8f1d2c",
-    borderColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
+    borderColor: "#CD1125",
   },
   tipPercentageText: {
     color: "#3b2619",
@@ -969,13 +991,13 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   error: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 14,
     lineHeight: 20,
   },
   primaryButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderRadius: 8,
     borderWidth: 1,
@@ -1009,7 +1031,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   todayTotal: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 22,
     fontWeight: "900",
   },

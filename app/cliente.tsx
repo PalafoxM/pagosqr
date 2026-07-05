@@ -1393,7 +1393,7 @@ const styles = StyleSheet.create({
   },
   headerIconButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 8,
     borderWidth: 1,
@@ -1409,7 +1409,7 @@ const styles = StyleSheet.create({
   },
   medallion: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 34,
     borderWidth: 3,
@@ -1436,7 +1436,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   kicker: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -1469,7 +1469,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   tabButtonActive: {
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
   },
   tabText: {
     color: "#3b2619",
@@ -1543,7 +1543,7 @@ const styles = StyleSheet.create({
   },
   approveButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 8,
     borderWidth: 1,
@@ -1557,7 +1557,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   paymentMessage: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 14,
     fontWeight: "800",
     lineHeight: 20,
@@ -1622,7 +1622,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   label: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 12,
     fontWeight: "800",
     textTransform: "uppercase",
@@ -1633,7 +1633,7 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   warning: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 14,
     lineHeight: 20,
   },
@@ -1739,7 +1739,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   activationStepPillActive: {
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
   },
   activationStepPillText: {
     color: "#fff8e8",
@@ -1858,7 +1858,7 @@ const styles = StyleSheet.create({
   },
   activationPrimaryButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderRadius: 8,
     borderWidth: 1,
@@ -1874,7 +1874,7 @@ const styles = StyleSheet.create({
   activationSecondaryButton: {
     alignItems: "center",
     backgroundColor: "#fff8e8",
-    borderColor: "#8f1d2c",
+    borderColor: "#CD1125",
     borderRadius: 8,
     borderWidth: 1,
     justifyContent: "center",
@@ -1882,7 +1882,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   activationSecondaryButtonText: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 14,
     fontWeight: "900",
   },
@@ -1909,7 +1909,7 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderCurve: "continuous",
     borderRadius: 8,

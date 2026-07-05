@@ -338,7 +338,7 @@ const styles = StyleSheet.create({
   },
   medallion: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#d5a84f",
     borderRadius: 8,
     borderWidth: 1,
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
   newCheckInButton: {
     alignItems: "center",
     alignSelf: "flex-start",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderRadius: 8,
     borderWidth: 1,
@@ -408,7 +408,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   label: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 12,
     fontWeight: "900",
     textTransform: "uppercase",
@@ -496,13 +496,13 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   error: {
-    color: "#8f1d2c",
+    color: "#CD1125",
     fontSize: 14,
     lineHeight: 20,
   },
   primaryButton: {
     alignItems: "center",
-    backgroundColor: "#8f1d2c",
+    backgroundColor: "#CD1125",
     borderColor: "#6f141f",
     borderRadius: 8,
     borderWidth: 1,
