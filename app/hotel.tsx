@@ -16,8 +16,7 @@ import {
   AuthSession,
   clearSession,
   getStoredSession,
-  isHotelProviderType,
-  isProviderProfile,
+  isHotelProfile,
 } from "@/services/auth";
 import {
   createHotelCheckIn,
@@ -29,8 +28,7 @@ import { registerPushToken } from "@/services/notifications";
 const isHotelUser = (session: AuthSession | null) =>
   Boolean(
     session &&
-      isProviderProfile(session.user.id_perfil) &&
-      isHotelProviderType(session.user.id_tipo_proveedor),
+      isHotelProfile(session.user.id_perfil, session.user.id_tipo_proveedor),
   );
 
 const formatCheckInDate = (value: string | undefined) => {

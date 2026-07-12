@@ -22,7 +22,7 @@ export type HotelCheckInResult = {
 };
 
 const isQrClientProfile = (profileId?: number) =>
-  Number(profileId) > 0 && Number(profileId) !== 2;
+  Number(profileId) > 0 && Number(profileId) !== 2 && Number(profileId) !== 7;
 
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {

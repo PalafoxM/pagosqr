@@ -293,11 +293,11 @@ export async function clearSession() {
 }
 
 export function getHomePathForProfile(profileId: number, providerTypeId = 0) {
-  if (isProviderProfile(profileId)) {
-    if (isHotelProviderType(providerTypeId)) {
-      return "/hotel";
-    }
+  if (isHotelProfile(profileId, providerTypeId)) {
+    return "/hotel";
+  }
 
+  if (isProviderProfile(profileId)) {
     if (isFoodProviderType(providerTypeId)) {
       return "/proveedor";
     }
@@ -317,18 +317,31 @@ export function isAllowedProfile(profileId: number) {
 }
 
 export function isClientProfile(profileId: number) {
-  return isAllowedProfile(profileId) && getNumber(profileId) !== 2;
+  const normalizedProfileId = getNumber(profileId);
+  return (
+    isAllowedProfile(profileId) &&
+    normalizedProfileId !== 2 &&
+    normalizedProfileId !== 7
+  );
 }
 
 export function isProviderProfile(profileId: number) {
   return getNumber(profileId) === 2;
 }
 
+export function isHotelProfile(profileId: number, providerTypeId = 0) {
+  const normalizedProfileId = getNumber(profileId);
+  return (
+    normalizedProfileId === 7 ||
+    (normalizedProfileId === 2 && isHotelProviderType(providerTypeId))
+  );
+}
+
 export function isHotelProviderType(providerTypeId: number) {
-  return providerTypeId === 2 || providerTypeId === 3;
+  return getNumber(providerTypeId) !== 1;
 }
 
 export function isFoodProviderType(providerTypeId: number) {
-  return providerTypeId === 1;
+  return getNumber(providerTypeId) === 1;
 }
 

@@ -148,6 +148,19 @@ const saveHandledPaymentRequestKeys = async (keys: Set<string>) => {
   );
 };
 
+const isPaymentAlreadyResolvedError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error || "");
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes("solicitud no encontrada") ||
+    normalized.includes("solicitud ya fue atendida") ||
+    normalized.includes("la solicitud ya fue atendida") ||
+    normalized.includes("http 404") ||
+    normalized.includes("http 409")
+  );
+};
+
 const openMapsForEstablecimiento = async (item: EstablecimientoFic) => {
   const query = [item.ubicacion, item.direccion, item.dsc_establecimiento]
     .filter(Boolean)
@@ -709,6 +722,15 @@ export default function ClienteScreen() {
 
         setPaymentRequest(null);
       } catch (paymentError) {
+        if (isPaymentAlreadyResolvedError(paymentError)) {
+          persistHandledPaymentRequest(request.transactionId);
+          setPaymentRequest(null);
+          promptedPaymentRef.current = null;
+          setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+          await refreshClienteProfile(sessionRef.current || activeSession);
+          return;
+        }
+
         setPaymentActionMessage(
           paymentError instanceof Error
             ? paymentError.message
@@ -769,7 +791,20 @@ export default function ClienteScreen() {
   );
 
   useEffect(() => {
+    if (!handledPaymentRequestsLoaded) {
+      return;
+    }
+
     return observePaymentRequests((nextPaymentRequest, source) => {
+      const transactionKey = String(nextPaymentRequest.transactionId || "");
+
+      if (!transactionKey || handledPaymentRequestsRef.current.has(transactionKey)) {
+        setPaymentRequest(null);
+        promptedPaymentRef.current = null;
+        setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+        return;
+      }
+
       setPaymentRequest(nextPaymentRequest);
       setPaymentActionMessage("");
       setActiveTab("datos");
@@ -778,7 +813,7 @@ export default function ClienteScreen() {
         showPaymentRequestPrompt(nextPaymentRequest);
       }
     });
-  }, [showPaymentRequestPrompt]);
+  }, [handledPaymentRequestsLoaded, showPaymentRequestPrompt]);
 
   useEffect(() => {
     return observeBalanceUpdates((balanceUpdate, source) => {
@@ -862,6 +897,7 @@ export default function ClienteScreen() {
     );
   }, [establecimientos, establecimientosSearch]);
   const qrActivo = Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
+  const activationSubmitted = Boolean(activationMessage);
   const refreshDisabled = manualRefreshing || profileLoading;
 
   const handleRefreshScreen = useCallback(async () => {
@@ -1062,7 +1098,7 @@ export default function ClienteScreen() {
               />
               <InfoRow
                 label="ID usuario"
-                value={String(session?.user.id_usuario || "")}
+                value={"FIC-"+String(session?.user.id_usuario || "")+"-QR"}
               />
 
               {profileLoading ? <ActivityIndicator color="#0f766e" /> : null}
@@ -1156,12 +1192,13 @@ export default function ClienteScreen() {
 
               <View style={styles.activationBox}>
                 <Pressable
-                  disabled={activationLoading || qrActivo}
+                  disabled={activationLoading || qrActivo || activationSubmitted}
                   onPress={handleStartActivation}
                   style={({ pressed }) => [
                     styles.activationButton,
                     pressed && styles.pressed,
-                    (activationLoading || qrActivo) && styles.mapButtonDisabled,
+                    (activationLoading || qrActivo || activationSubmitted) &&
+                      styles.mapButtonDisabled,
                   ]}
                 >
                   <IconSymbol
@@ -1170,7 +1207,11 @@ export default function ClienteScreen() {
                     size={20}
                   />
                   <Text style={styles.activationButtonText}>
-                    {qrActivo ? "QR activado" : "Activar QR"}
+                    {qrActivo
+                      ? "QR activado"
+                      : activationSubmitted
+                        ? "Activación enviada"
+                        : "Activar QR"}
                   </Text>
                 </Pressable>
 
@@ -1361,6 +1402,7 @@ export default function ClienteScreen() {
                         onPress={handleSubmitActivation}
                         style={({ pressed }) => [
                           styles.activationPrimaryButton,
+                          styles.activationSaveButton,
                           (pressed ||
                             activationLoading ||
                             !signatureImage) &&
@@ -1920,6 +1962,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     minHeight: 44,
     paddingHorizontal: 14,
+  },
+  activationSaveButton: {
+    backgroundColor: "#15803d",
+    borderColor: "#166534",
   },
   activationPrimaryButtonText: {
     color: "#fff8e8",

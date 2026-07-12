@@ -8,7 +8,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "backfic:start": "node backFic/index.js",
+    "backfic:pm2": "pm2 start backFic/ecosystem.config.cjs",
+    "backfic:pm2:reload": "pm2 reload backfic"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",

@@ -17,7 +17,7 @@ import {
   clearSession,
   getStoredSession,
   isFoodProviderType,
-  isHotelProviderType,
+  isHotelProfile,
   isProviderProfile,
 } from "@/services/auth";
 import { registerPushToken } from "@/services/notifications";
@@ -34,7 +34,7 @@ import {
 
 const TIP_PERCENTAGES = [0, 5, 10, 15];
 const isQrClientProfile = (profileId?: number) =>
-  Number(profileId) > 0 && Number(profileId) !== 2;
+  Number(profileId) > 0 && Number(profileId) !== 2 && Number(profileId) !== 7;
 
 const moneyFromText = (value: string) => {
   const normalized = value.replace(",", ".").trim();
@@ -124,7 +124,12 @@ export default function ProveedorScreen() {
         return;
       }
 
-      if (isHotelProviderType(storedSession.user.id_tipo_proveedor)) {
+      if (
+        isHotelProfile(
+          storedSession.user.id_perfil,
+          storedSession.user.id_tipo_proveedor,
+        )
+      ) {
         router.replace("/hotel" as never);
         return;
       }
