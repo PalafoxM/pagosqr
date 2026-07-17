@@ -1,13 +1,18 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as ImageManipulator from "expo-image-manipulator";
 import { router, Stack } from "expo-router";
 import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
+  Image,
   Linking,
+  Modal,
   Platform,
   Pressable,
+  SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,7 +20,9 @@ import {
   View,
 } from "react-native";
 import QRCode from "react-native-qrcode-svg";
-import SignatureScreen, { SignatureViewRef } from "react-native-signature-canvas";
+import SignatureScreen, {
+  SignatureViewRef,
+} from "react-native-signature-canvas";
 
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
@@ -45,10 +52,23 @@ import {
 } from "@/services/notifications";
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
-type ActivationStep = "idle" | "front" | "back" | "signature";
+type ActivationStep =
+  | "idle"
+  | "front"
+  | "front_review"
+  | "back"
+  | "back_review"
+  | "signature"
+  | "summary";
 
 const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
 const MAX_STORED_PAYMENT_REQUESTS = 80;
+
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const SCREEN_HEIGHT = Dimensions.get("window").height;
+const CAMERA_CONTAINER_WIDTH = SCREEN_WIDTH - 32;
+const CARD_FRAME_WIDTH = CAMERA_CONTAINER_WIDTH * 0.9;
+const CARD_FRAME_HEIGHT = CARD_FRAME_WIDTH / 1.585;
 
 const tabs: { id: ClienteTab; label: string }[] = [
   { id: "datos", label: "Mis datos" },
@@ -61,7 +81,10 @@ const formatPaymentTotal = (value: unknown) =>
 
 const formatBalance = (value: unknown) => Number(value || 0).toFixed(2);
 
-const logClienteSaldo = (message: string, details?: Record<string, unknown>) => {
+const logClienteSaldo = (
+  message: string,
+  details?: Record<string, unknown>,
+) => {
   console.log(`[cliente:saldo] ${message}`, details || {});
 };
 
@@ -122,8 +145,13 @@ const signatureCanvasWebStyle = `
     overflow: hidden;
     width: 100%;
   }
+  .m-signature-pad {
+    touch-action: none;
+  }
+  .m-signature-pad--body canvas {
+    touch-action: none;
+  }
 `;
-
 
 const loadHandledPaymentRequestKeys = async () => {
   try {
@@ -202,21 +230,30 @@ export default function ClienteScreen() {
   const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] =
     useState(false);
   const [activationStep, setActivationStep] = useState<ActivationStep>("idle");
-  const [ineFront, setIneFront] = useState("");
-  const [ineBack, setIneBack] = useState("");
-  const [signatureImage, setSignatureImage] = useState("");
-  const [signatureScrollLocked, setSignatureScrollLocked] = useState(false);
-  const [activationCaptureLoading, setActivationCaptureLoading] = useState(false);
+  const [ineFront, setIneFront] = useState<string | null>(null);
+  const [ineBack, setIneBack] = useState<string | null>(null);
+  const [signatureImage, setSignatureImage] = useState<string | null>(null);
+  const [activationCaptureLoading, setActivationCaptureLoading] =
+    useState(false);
   const [activationCameraActive, setActivationCameraActive] = useState(false);
   const [activationCameraReady, setActivationCameraReady] = useState(false);
+  const [cameraMountReady, setCameraMountReady] = useState(false);
+  const [hasSignatureStrokes, setHasSignatureStrokes] = useState(false);
   const [activationLoading, setActivationLoading] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [activationError, setActivationError] = useState("");
-  const [activationCaptureHint, setActivationCaptureHint] = useState("");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const [cameraLayout, setCameraLayout] = useState({ width: 0, height: 0 });
+  const [activationModalVisible, setActivationModalVisible] = useState(false);
+  const [frontPhotoUri, setFrontPhotoUri] = useState<string | null>(null);
+  const [backPhotoUri, setBackPhotoUri] = useState<string | null>(null);
+  const [cameraKey, setCameraKey] = useState(0);
+  const [signatureKey, setSignatureKey] = useState(0);
   const cameraRef = useRef<any>(null);
   const signatureRef = useRef<SignatureViewRef | null>(null);
-  const signatureSubmitPendingRef = useRef(false);
+  const cameraMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const sessionRef = useRef<AuthSession | null>(null);
   const profileRef = useRef<ClienteProfile | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
@@ -272,15 +309,20 @@ export default function ClienteScreen() {
   useEffect(() => {
     const activeSession = sessionRef.current;
 
-    if (!activeSession || registeredPushTokenForSessionRef.current === sessionToken) {
+    if (
+      !activeSession ||
+      registeredPushTokenForSessionRef.current === sessionToken
+    ) {
       return;
     }
 
     registeredPushTokenForSessionRef.current = sessionToken;
-    registerPushToken(activeSession.token, activeSession.user.id_usuario).catch((pushError) => {
-      console.warn("No se pudo registrar push token.", pushError);
-      registeredPushTokenForSessionRef.current = "";
-    });
+    registerPushToken(activeSession.token, activeSession.user.id_usuario).catch(
+      (pushError) => {
+        console.warn("No se pudo registrar push token.", pushError);
+        registeredPushTokenForSessionRef.current = "";
+      },
+    );
   }, [sessionToken, sessionUserId]);
 
   useEffect(() => {
@@ -288,17 +330,37 @@ export default function ClienteScreen() {
   }, [paymentRequest]);
 
   useEffect(() => {
-    const isCameraStep = activationStep === "front" || activationStep === "back";
+    const isCameraStep =
+      activationStep === "front" || activationStep === "back";
+
+    if (cameraMountTimerRef.current) {
+      clearTimeout(cameraMountTimerRef.current);
+      cameraMountTimerRef.current = null;
+    }
 
     setActivationCameraReady(false);
-    setActivationCameraActive(isCameraStep);
+    setCameraMountReady(false);
+
+    if (!isCameraStep || !activationModalVisible) {
+      setActivationCameraActive(false);
+      return;
+    }
+
+    cameraMountTimerRef.current = setTimeout(() => {
+      cameraMountTimerRef.current = null;
+      setActivationCameraActive(true);
+      setCameraMountReady(true);
+    }, 180);
 
     return () => {
-      if (isCameraStep) {
-        setActivationCameraActive(false);
+      if (cameraMountTimerRef.current) {
+        clearTimeout(cameraMountTimerRef.current);
+        cameraMountTimerRef.current = null;
       }
+      setActivationCameraActive(false);
+      setCameraMountReady(false);
     };
-  }, [activationStep]);
+  }, [activationStep, activationModalVisible, cameraKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -352,7 +414,10 @@ export default function ClienteScreen() {
     getClienteProfile(activeSession)
       .then((nextProfile) => {
         if (mounted && requestId === profileRequestIdRef.current) {
-          const nextSession = mergeSessionWithProfile(activeSession, nextProfile);
+          const nextSession = mergeSessionWithProfile(
+            activeSession,
+            nextProfile,
+          );
           logClienteSaldo("consulta inicial perfil aplicada", {
             requestId,
             monto_deposito: nextProfile.monto_deposito,
@@ -418,22 +483,49 @@ export default function ClienteScreen() {
     };
   }, [sessionToken]);
 
+  const closeActivationModal = useCallback(() => {
+    setActivationModalVisible(false);
+    setActivationStep("idle");
+    setActivationCaptureLoading(false);
+    setActivationCameraActive(false);
+    setActivationCameraReady(false);
+    setCameraMountReady(false);
+    setIneFront(null);
+    setIneBack(null);
+    setFrontPhotoUri(null);
+    setBackPhotoUri(null);
+    setSignatureImage(null);
+    setHasSignatureStrokes(false);
+    setActivationError("");
+    setActivationMessage("");
+    setCameraLayout({ width: 0, height: 0 });
+    setCameraKey((prev) => prev + 1);
+    setSignatureKey((prev) => prev + 1);
+  }, []);
+
   const resetActivation = useCallback(() => {
     setActivationStep("idle");
     setActivationCaptureLoading(false);
     setActivationCameraActive(false);
     setActivationCameraReady(false);
-    setIneFront("");
-    setIneBack("");
-    setSignatureImage("");
-    setActivationCaptureHint("");
+    setCameraMountReady(false);
+    setIneFront(null);
+    setIneBack(null);
+    setFrontPhotoUri(null);
+    setBackPhotoUri(null);
+    setSignatureImage(null);
+    setHasSignatureStrokes(false);
     setActivationError("");
+    setActivationMessage("");
+    setSignatureKey((prev) => prev + 1);
   }, []);
 
   const handleStartActivation = useCallback(async () => {
     const activeProfile = profileRef.current;
     const activeSession = sessionRef.current;
-    const activeQr = Number(activeProfile?.activo_qr ?? activeSession?.user.activo_qr ?? 0) === 1;
+    const activeQr =
+      Number(activeProfile?.activo_qr ?? activeSession?.user.activo_qr ?? 0) ===
+      1;
 
     if (activeQr) {
       setActivationMessage("QR activado.");
@@ -442,7 +534,6 @@ export default function ClienteScreen() {
     }
 
     setActivationMessage("");
-    setActivationCaptureHint("");
     setActivationError("");
 
     if (!cameraPermission?.granted) {
@@ -456,13 +547,74 @@ export default function ClienteScreen() {
       }
     }
 
-    setIneFront("");
-    setIneBack("");
-    setSignatureImage("");
+    setIneFront(null);
+    setIneBack(null);
+    setFrontPhotoUri(null);
+    setBackPhotoUri(null);
+    setSignatureImage(null);
+    setHasSignatureStrokes(false);
     setActivationCaptureLoading(false);
     setActivationCameraReady(false);
+    setCameraMountReady(false);
+    setCameraLayout({ width: 0, height: 0 });
+    setCameraKey((prev) => prev + 1);
+    setSignatureKey((prev) => prev + 1);
     setActivationStep("front");
+    setActivationModalVisible(true);
   }, [cameraPermission?.granted, requestCameraPermission]);
+
+  const cropToCardFrame = useCallback(
+    async (uri: string, photoWidth: number, photoHeight: number) => {
+      if (!cameraLayout.width || !cameraLayout.height) {
+        return uri;
+      }
+
+      const viewWidth = cameraLayout.width;
+      const viewHeight = cameraLayout.height;
+
+      const scale = Math.max(viewWidth / photoWidth, viewHeight / photoHeight);
+
+      const displayedWidth = photoWidth * scale;
+      const displayedHeight = photoHeight * scale;
+
+      const offsetX = (viewWidth - displayedWidth) / 2;
+      const offsetY = (viewHeight - displayedHeight) / 2;
+
+      const frameX = (viewWidth - CARD_FRAME_WIDTH) / 2;
+      const frameY = viewHeight * 0.15;
+
+      const cropX = Math.round((frameX - offsetX) / scale);
+      const cropY = Math.round((frameY - offsetY) / scale);
+      const cropWidth = Math.round(CARD_FRAME_WIDTH / scale);
+      const cropHeight = Math.round(CARD_FRAME_HEIGHT / scale);
+
+      const safeOriginX = Math.max(0, Math.min(cropX, photoWidth - cropWidth));
+      const safeOriginY = Math.max(
+        0,
+        Math.min(cropY, photoHeight - cropHeight),
+      );
+      const safeWidth = Math.min(cropWidth, photoWidth - safeOriginX);
+      const safeHeight = Math.min(cropHeight, photoHeight - safeOriginY);
+
+      const result = await ImageManipulator.manipulateAsync(
+        uri,
+        [
+          {
+            crop: {
+              originX: safeOriginX,
+              originY: safeOriginY,
+              width: safeWidth,
+              height: safeHeight,
+            },
+          },
+        ],
+        { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+      );
+
+      return result.uri;
+    },
+    [cameraLayout],
+  );
 
   const handleCaptureIne = useCallback(async () => {
     if (
@@ -478,30 +630,52 @@ export default function ClienteScreen() {
     setActivationError("");
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({
-        base64: true,
-        quality: 0.35,
+      const picture = await cameraRef.current.takePictureAsync({
+        quality: 1.0,
+        base64: false,
         skipProcessing: false,
       });
 
-      if (!photo.base64) {
-        throw new Error("La cámara no devolvió imagen. Intenta de nuevo.");
+      if (!picture?.uri) {
+        throw new Error("No se obtuvo una imagen válida.");
       }
 
-      const imageData = `data:image/jpeg;base64,${photo.base64}`;
-      setActivationCameraActive(false);
-      setActivationCameraReady(false);
+      const imageInfo = await ImageManipulator.manipulateAsync(
+        picture.uri,
+        [],
+        { compress: 1, format: ImageManipulator.SaveFormat.JPEG },
+      );
+
+      const croppedUri = await cropToCardFrame(
+        imageInfo.uri,
+        imageInfo.width,
+        imageInfo.height,
+      );
+
+      const manipResult = await ImageManipulator.manipulateAsync(
+        croppedUri,
+        [],
+        {
+          compress: 0.92,
+          format: ImageManipulator.SaveFormat.JPEG,
+          base64: true,
+        },
+      );
+
+      if (!manipResult?.base64) {
+        throw new Error("No se pudo convertir la imagen recortada.");
+      }
+
+      const imageData = `data:image/jpeg;base64,${manipResult.base64}`;
 
       if (activationStep === "front") {
         setIneFront(imageData);
-        setActivationCaptureHint("Frente capturado. Siguiente: reverso.");
-        setActivationStep("back");
-        setTimeout(() => setActivationCaptureHint(""), 1600);
-      } else {
+        setFrontPhotoUri(manipResult.uri);
+        setActivationStep("front_review");
+      } else if (activationStep === "back") {
         setIneBack(imageData);
-        setActivationCaptureHint("Reverso capturado. Siguiente: firma.");
-        setActivationStep("signature");
-        setTimeout(() => setActivationCaptureHint(""), 1600);
+        setBackPhotoUri(manipResult.uri);
+        setActivationStep("back_review");
       }
     } catch (captureError) {
       setActivationError(
@@ -509,18 +683,68 @@ export default function ClienteScreen() {
           ? captureError.message
           : "No se pudo tomar la fotografía.",
       );
-      setActivationCameraActive(true);
     } finally {
       setActivationCaptureLoading(false);
     }
-  }, [activationCameraReady, activationCaptureLoading, activationStep]);
+  }, [
+    activationCameraReady,
+    activationCaptureLoading,
+    activationStep,
+    cropToCardFrame,
+  ]);
+
+  const goToNextStep = useCallback(() => {
+    if (activationStep === "front_review" && ineFront) {
+      setActivationStep("back");
+      return;
+    }
+
+    if (activationStep === "back_review" && ineBack) {
+      setActivationStep("signature");
+      setSignatureKey((prev) => prev + 1);
+      return;
+    }
+  }, [activationStep, ineFront, ineBack]);
+
+  const retakeCurrentSide = useCallback(() => {
+    if (activationStep === "front_review") {
+      setIneFront(null);
+      setFrontPhotoUri(null);
+      setActivationStep("front");
+      return;
+    }
+
+    if (activationStep === "back_review") {
+      setIneBack(null);
+      setBackPhotoUri(null);
+      setActivationStep("back");
+      return;
+    }
+
+    if (activationStep === "summary") {
+      setActivationStep("signature");
+      setSignatureKey((prev) => prev + 1);
+    }
+  }, [activationStep]);
+
+  const handleReviewSignature = useCallback(() => {
+    if (!hasSignatureStrokes) {
+      setActivationError("Firma con tu dedo antes de continuar.");
+      return;
+    }
+
+    setActivationError("");
+    signatureRef.current?.readSignature();
+  }, [hasSignatureStrokes]);
 
   const saveActivationWithSignature = useCallback(
     async (signature: string) => {
       const activeSession = sessionRef.current;
 
       if (!activeSession || !ineFront || !ineBack || !signature) {
-        setActivationError("Captura frente, reverso y firma para activar el QR.");
+        setActivationError(
+          "Captura frente, reverso y firma para activar el QR.",
+        );
         setActivationLoading(false);
         return;
       }
@@ -545,7 +769,7 @@ export default function ClienteScreen() {
         setActivationMessage(
           "Documentos guardados correctamente. Tu activación QR quedó en revisión.",
         );
-        resetActivation();
+        closeActivationModal();
       } catch (activationSaveError) {
         setActivationError(
           activationSaveError instanceof Error
@@ -556,20 +780,20 @@ export default function ClienteScreen() {
         setActivationLoading(false);
       }
     },
-    [ineBack, ineFront, resetActivation],
+    [ineBack, ineFront, closeActivationModal],
   );
 
   const handleSubmitActivation = useCallback(() => {
-    if (!ineFront || !ineBack) {
-      setActivationError("Captura frente y reverso para activar el QR.");
+    if (!ineFront || !ineBack || !signatureImage) {
+      setActivationError("Captura frente, reverso y firma para activar el QR.");
       return;
     }
 
-    signatureSubmitPendingRef.current = true;
     setActivationLoading(true);
     setActivationError("");
-    signatureRef.current?.readSignature();
-  }, [ineBack, ineFront]);
+    void saveActivationWithSignature(signatureImage);
+  }, [ineBack, ineFront, signatureImage, saveActivationWithSignature]);
+
   const handleLogout = useCallback(async () => {
     await clearSession();
     router.replace("/");
@@ -623,7 +847,11 @@ export default function ClienteScreen() {
 
   const applyBalanceUpdate = useCallback(
     async (
-      balanceUpdate: { current_balance?: unknown; monto_deposito_hotel?: unknown; hotel_balance?: unknown },
+      balanceUpdate: {
+        current_balance?: unknown;
+        monto_deposito_hotel?: unknown;
+        hotel_balance?: unknown;
+      },
       reason: string,
     ) => {
       const activeSession = sessionRef.current;
@@ -650,8 +878,11 @@ export default function ClienteScreen() {
         ? formatBalance(balanceUpdate.current_balance)
         : currentProfile?.monto_deposito || activeSession.user.monto_deposito;
       const montoDepositoHotel = hasHotelBalance
-        ? formatBalance(balanceUpdate.monto_deposito_hotel ?? balanceUpdate.hotel_balance)
-        : currentProfile?.monto_deposito_hotel || activeSession.user.monto_deposito_hotel;
+        ? formatBalance(
+            balanceUpdate.monto_deposito_hotel ?? balanceUpdate.hotel_balance,
+          )
+        : currentProfile?.monto_deposito_hotel ||
+          activeSession.user.monto_deposito_hotel;
 
       logClienteSaldo("saldo actualizado por notificación", {
         reason,
@@ -798,7 +1029,10 @@ export default function ClienteScreen() {
     return observePaymentRequests((nextPaymentRequest, source) => {
       const transactionKey = String(nextPaymentRequest.transactionId || "");
 
-      if (!transactionKey || handledPaymentRequestsRef.current.has(transactionKey)) {
+      if (
+        !transactionKey ||
+        handledPaymentRequestsRef.current.has(transactionKey)
+      ) {
         setPaymentRequest(null);
         promptedPaymentRef.current = null;
         setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
@@ -875,12 +1109,14 @@ export default function ClienteScreen() {
       id_perfil: session.user.id_perfil,
     });
   }, [profile?.nombre_completo, session]);
+
   const displayedBalance =
     profile?.monto_deposito !== undefined && profile.monto_deposito !== ""
       ? profile.monto_deposito
       : profileLoading
         ? null
         : "0";
+
   const filteredEstablecimientos = useMemo(() => {
     const searchTerm = normalizeSearchText(establecimientosSearch);
 
@@ -889,14 +1125,14 @@ export default function ClienteScreen() {
     }
 
     return establecimientos.filter((item) =>
-      [
-        item.dsc_establecimiento,
-        item.ubicacion,
-        item.direccion,
-      ].some((value) => normalizeSearchText(value).includes(searchTerm)),
+      [item.dsc_establecimiento, item.ubicacion, item.direccion].some((value) =>
+        normalizeSearchText(value).includes(searchTerm),
+      ),
     );
   }, [establecimientos, establecimientosSearch]);
-  const qrActivo = Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
+
+  const qrActivo =
+    Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
   const activationSubmitted = Boolean(activationMessage);
   const refreshDisabled = manualRefreshing || profileLoading;
 
@@ -923,11 +1159,506 @@ export default function ClienteScreen() {
     }
   }, [refreshDisabled, refreshClienteProfile]);
 
+  const renderActivationModal = () => {
+    if (!activationModalVisible) {
+      return null;
+    }
+
+    const renderFrontStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Frente de INE</Text>
+          <Text style={styles.modalSubtitle}>
+            Coloca el frente de tu credencial dentro del marco
+          </Text>
+        </View>
+
+        <View
+          style={styles.modalCameraContainer}
+          key={`camera-front-${cameraKey}`}
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setCameraLayout({ width, height });
+          }}
+        >
+          {cameraMountReady ? (
+            <CameraView
+              key={`camera-view-front-${cameraKey}`}
+              ref={cameraRef}
+              style={styles.cameraView}
+              active={activationCameraActive}
+              facing="back"
+              onCameraReady={() => setActivationCameraReady(true)}
+              onMountError={(cameraError) => {
+                setActivationCameraActive(false);
+                setActivationError(
+                  cameraError?.message ||
+                    "No se pudo iniciar la cámara. Intenta de nuevo.",
+                );
+              }}
+            />
+          ) : null}
+          {!activationCameraReady ? (
+            <View style={styles.cameraLoadingOverlay} pointerEvents="none">
+              <ActivityIndicator color="#fff8e8" size="small" />
+            </View>
+          ) : null}
+          <View style={styles.cameraOverlay} pointerEvents="none">
+            <View style={styles.overlayTop} />
+            <View style={styles.overlayMiddle}>
+              <View style={styles.overlaySide} />
+              <View style={styles.cardFrame}>
+                <View style={[styles.corner, styles.cornerTL]} />
+                <View style={[styles.corner, styles.cornerTR]} />
+                <View style={[styles.corner, styles.cornerBL]} />
+                <View style={[styles.corner, styles.cornerBR]} />
+              </View>
+              <View style={styles.overlaySide} />
+            </View>
+            <View style={styles.overlayBottom}>
+              <Text style={styles.overlayHint}>
+                Mantén el documento plano y bien iluminado
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={closeActivationModal}
+            style={[styles.modalSecondaryButton, styles.modalCancelButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Cancelar</Text>
+          </Pressable>
+          <Pressable
+            disabled={activationCaptureLoading || !activationCameraReady}
+            onPress={handleCaptureIne}
+            style={[
+              styles.modalPrimaryButton,
+              (activationCaptureLoading || !activationCameraReady) &&
+                styles.modalButtonDisabled,
+            ]}
+          >
+            {activationCaptureLoading ? (
+              <ActivityIndicator color="#fff8e8" size="small" />
+            ) : (
+              <Text style={styles.modalPrimaryButtonText}>Tomar foto</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    const renderFrontReviewStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Revisar frente de INE</Text>
+          <Text style={styles.modalSubtitle}>
+            Verifica que la imagen sea legible antes de continuar
+          </Text>
+        </View>
+
+        <View style={styles.modalReviewContainer}>
+          {frontPhotoUri ? (
+            <Image
+              source={{ uri: frontPhotoUri }}
+              style={styles.modalReviewImage}
+              resizeMode="contain"
+            />
+          ) : null}
+        </View>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={closeActivationModal}
+            style={[styles.modalSecondaryButton, styles.modalCancelButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Cancelar</Text>
+          </Pressable>
+          <Pressable
+            onPress={retakeCurrentSide}
+            style={[styles.modalSecondaryButton, styles.modalRetakeButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Repetir</Text>
+          </Pressable>
+          <Pressable onPress={goToNextStep} style={styles.modalPrimaryButton}>
+            <Text style={styles.modalPrimaryButtonText}>Continuar</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    const renderBackStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Reverso de INE</Text>
+          <Text style={styles.modalSubtitle}>
+            Ahora coloca el reverso de tu credencial dentro del marco
+          </Text>
+        </View>
+
+        <View
+          style={styles.modalCameraContainer}
+          key={`camera-back-${cameraKey}`}
+          onLayout={(event) => {
+            const { width, height } = event.nativeEvent.layout;
+            setCameraLayout({ width, height });
+          }}
+        >
+          {cameraMountReady ? (
+            <CameraView
+              key={`camera-view-back-${cameraKey}`}
+              ref={cameraRef}
+              style={styles.cameraView}
+              active={activationCameraActive}
+              facing="back"
+              onCameraReady={() => setActivationCameraReady(true)}
+              onMountError={(cameraError) => {
+                setActivationCameraActive(false);
+                setActivationError(
+                  cameraError?.message ||
+                    "No se pudo iniciar la cámara. Intenta de nuevo.",
+                );
+              }}
+            />
+          ) : null}
+          {!activationCameraReady ? (
+            <View style={styles.cameraLoadingOverlay} pointerEvents="none">
+              <ActivityIndicator color="#fff8e8" size="small" />
+            </View>
+          ) : null}
+          <View style={styles.cameraOverlay} pointerEvents="none">
+            <View style={styles.overlayTop} />
+            <View style={styles.overlayMiddle}>
+              <View style={styles.overlaySide} />
+              <View style={styles.cardFrame}>
+                <View style={[styles.corner, styles.cornerTL]} />
+                <View style={[styles.corner, styles.cornerTR]} />
+                <View style={[styles.corner, styles.cornerBL]} />
+                <View style={[styles.corner, styles.cornerBR]} />
+              </View>
+              <View style={styles.overlaySide} />
+            </View>
+            <View style={styles.overlayBottom}>
+              <Text style={styles.overlayHint}>
+                Mantén el documento plano y bien iluminado
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={closeActivationModal}
+            style={[styles.modalSecondaryButton, styles.modalCancelButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Cancelar</Text>
+          </Pressable>
+          <Pressable
+            disabled={activationCaptureLoading || !activationCameraReady}
+            onPress={handleCaptureIne}
+            style={[
+              styles.modalPrimaryButton,
+              (activationCaptureLoading || !activationCameraReady) &&
+                styles.modalButtonDisabled,
+            ]}
+          >
+            {activationCaptureLoading ? (
+              <ActivityIndicator color="#fff8e8" size="small" />
+            ) : (
+              <Text style={styles.modalPrimaryButtonText}>Tomar foto</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    const renderBackReviewStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Revisar reverso de INE</Text>
+          <Text style={styles.modalSubtitle}>
+            Verifica que la imagen sea legible antes de continuar
+          </Text>
+        </View>
+
+        <View style={styles.modalReviewContainer}>
+          {backPhotoUri ? (
+            <Image
+              source={{ uri: backPhotoUri }}
+              style={styles.modalReviewImage}
+              resizeMode="contain"
+            />
+          ) : null}
+        </View>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={closeActivationModal}
+            style={[styles.modalSecondaryButton, styles.modalCancelButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Cancelar</Text>
+          </Pressable>
+          <Pressable
+            onPress={retakeCurrentSide}
+            style={[styles.modalSecondaryButton, styles.modalRetakeButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Repetir</Text>
+          </Pressable>
+          <Pressable onPress={goToNextStep} style={styles.modalPrimaryButton}>
+            <Text style={styles.modalPrimaryButtonText}>Continuar</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    const renderSignatureStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Firma del titular</Text>
+          <Text style={styles.modalSubtitle}>
+            Firma dentro del recuadro para completar tu activación
+          </Text>
+        </View>
+
+        <View
+          style={styles.modalSignatureContainer}
+          key={`signature-${signatureKey}`}
+        >
+          {signatureImage ? (
+            <Image
+              source={{ uri: signatureImage }}
+              style={styles.modalSignaturePreview}
+              resizeMode="contain"
+            />
+          ) : (
+            <SignatureScreen
+              ref={signatureRef}
+              autoClear={false}
+              backgroundColor="#fff8e8"
+              clearText="Limpiar"
+              confirmText="Guardar"
+              descriptionText=""
+              imageType="image/png"
+              maxWidth={3.2}
+              minWidth={1.2}
+              penColor="#263B80"
+              onBegin={() => {
+                setActivationError("");
+                setHasSignatureStrokes(true);
+              }}
+              onEmpty={() => {
+                setHasSignatureStrokes(false);
+                setSignatureImage(null);
+                setActivationError("Firma con tu dedo antes de continuar.");
+              }}
+              onError={(signatureError) => {
+                setActivationError(
+                  signatureError instanceof Error
+                    ? signatureError.message
+                    : "No se pudo abrir el panel de firma.",
+                );
+              }}
+              onOK={(signature) => {
+                setSignatureImage(signature);
+                setActivationStep("summary");
+              }}
+              scrollable={false}
+              style={styles.modalSignatureCanvas}
+              webStyle={signatureCanvasWebStyle}
+              webviewProps={{
+                androidLayerType: "hardware",
+                cacheEnabled: true,
+                nestedScrollEnabled: false,
+                overScrollMode: "never",
+                scrollEnabled: false,
+              }}
+            />
+          )}
+        </View>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+        {activationMessage ? (
+          <Text style={styles.modalSuccess}>{activationMessage}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={() => {
+              signatureRef.current?.clearSignature();
+              setSignatureImage(null);
+              setHasSignatureStrokes(false);
+              setActivationError("");
+            }}
+            style={[styles.modalSecondaryButton, styles.modalClearButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Limpiar</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => {
+              setActivationStep("back_review");
+            }}
+            style={[styles.modalSecondaryButton, styles.modalBackButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Volver</Text>
+          </Pressable>
+          <Pressable
+            disabled={
+              activationLoading || (!signatureImage && !hasSignatureStrokes)
+            }
+            onPress={() => {
+              if (signatureImage) {
+                setActivationStep("summary");
+                return;
+              }
+              handleReviewSignature();
+            }}
+            style={[
+              styles.modalPrimaryButton,
+              styles.modalSaveButton,
+              (activationLoading ||
+                (!signatureImage && !hasSignatureStrokes)) &&
+                styles.modalButtonDisabled,
+            ]}
+          >
+            {activationLoading ? (
+              <ActivityIndicator color="#fff8e8" size="small" />
+            ) : (
+              <Text style={styles.modalPrimaryButtonText}>Revisar</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    const renderSummaryStep = () => (
+      <View style={styles.modalStepContainer}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Revisión final</Text>
+          <Text style={styles.modalSubtitle}>
+            Verifica que la información sea correcta antes de enviar
+          </Text>
+        </View>
+
+        <ScrollView
+          style={styles.modalSummaryScroll}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 8 }}
+        >
+          <Text style={styles.modalSummaryLabel}>Frente de INE</Text>
+          {frontPhotoUri ? (
+            <Image
+              source={{ uri: frontPhotoUri }}
+              style={styles.modalSummaryImage}
+              resizeMode="contain"
+            />
+          ) : null}
+
+          <Text style={styles.modalSummaryLabel}>Reverso de INE</Text>
+          {backPhotoUri ? (
+            <Image
+              source={{ uri: backPhotoUri }}
+              style={styles.modalSummaryImage}
+              resizeMode="contain"
+            />
+          ) : null}
+
+          <Text style={styles.modalSummaryLabel}>Firma</Text>
+          {signatureImage ? (
+            <View style={styles.modalSummarySignatureWrapper}>
+              <Image
+                source={{ uri: signatureImage }}
+                style={styles.modalSummarySignature}
+                resizeMode="contain"
+              />
+            </View>
+          ) : (
+            <View style={styles.modalSummarySignatureWrapper}>
+              <Text style={styles.modalSummarySignaturePlaceholder}>
+                No hay firma capturada
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+
+        {activationError ? (
+          <Text style={styles.modalError}>{activationError}</Text>
+        ) : null}
+        {activationMessage ? (
+          <Text style={styles.modalSuccess}>{activationMessage}</Text>
+        ) : null}
+
+        <View style={styles.modalActions}>
+          <Pressable
+            onPress={() => {
+              setActivationStep("signature");
+              setSignatureKey((prev) => prev + 1);
+            }}
+            style={[styles.modalSecondaryButton, styles.modalBackButton]}
+          >
+            <Text style={styles.modalSecondaryButtonText}>Volver</Text>
+          </Pressable>
+          <Pressable
+            disabled={activationLoading || !signatureImage}
+            onPress={handleSubmitActivation}
+            style={[
+              styles.modalPrimaryButton,
+              styles.modalSaveButton,
+              (activationLoading || !signatureImage) &&
+                styles.modalButtonDisabled,
+            ]}
+          >
+            {activationLoading ? (
+              <ActivityIndicator color="#fff8e8" size="small" />
+            ) : (
+              <Text style={styles.modalPrimaryButtonText}>Guardar</Text>
+            )}
+          </Pressable>
+        </View>
+      </View>
+    );
+
+    return (
+      <Modal
+        visible={activationModalVisible}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={closeActivationModal}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          {activationStep === "front" && renderFrontStep()}
+          {activationStep === "front_review" && renderFrontReviewStep()}
+          {activationStep === "back" && renderBackStep()}
+          {activationStep === "back_review" && renderBackReviewStep()}
+          {activationStep === "signature" && renderSignatureStep()}
+          {activationStep === "summary" && renderSummaryStep()}
+        </SafeAreaView>
+      </Modal>
+    );
+  };
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={styles.content}
-      scrollEnabled={!signatureScrollLocked}
       style={styles.screen}
     >
       <Stack.Screen options={{ title: "Cliente" }} />
@@ -944,9 +1675,7 @@ export default function ClienteScreen() {
               <View style={styles.lance} />
             </View>
             <View style={styles.bannerCopy}>
-              <Text style={styles.kicker}>
-                Hospedaje y Alimentos FIC
-              </Text>
+              <Text style={styles.kicker}>Hospedaje y Alimentos FIC</Text>
               <Text style={styles.title}>
                 Hola, {profile?.nombre_completo || "cliente"}
               </Text>
@@ -969,7 +1698,11 @@ export default function ClienteScreen() {
                 {manualRefreshing ? (
                   <ActivityIndicator color="#fff8e8" size="small" />
                 ) : (
-                  <IconSymbol color="#fff8e8" name="arrow.clockwise" size={22} />
+                  <IconSymbol
+                    color="#fff8e8"
+                    name="arrow.clockwise"
+                    size={22}
+                  />
                 )}
               </Pressable>
               <Pressable
@@ -1098,7 +1831,7 @@ export default function ClienteScreen() {
               />
               <InfoRow
                 label="ID usuario"
-                value={"FIC-"+String(session?.user.id_usuario || "")+"-QR"}
+                value={"FIC-" + String(session?.user.id_usuario || "") + "-QR"}
               />
 
               {profileLoading ? <ActivityIndicator color="#0f766e" /> : null}
@@ -1192,7 +1925,9 @@ export default function ClienteScreen() {
 
               <View style={styles.activationBox}>
                 <Pressable
-                  disabled={activationLoading || qrActivo || activationSubmitted}
+                  disabled={
+                    activationLoading || qrActivo || activationSubmitted
+                  }
                   onPress={handleStartActivation}
                   style={({ pressed }) => [
                     styles.activationButton,
@@ -1215,216 +1950,10 @@ export default function ClienteScreen() {
                   </Text>
                 </Pressable>
 
-                {!qrActivo && (activationStep === "front" || activationStep === "back") ? (
-                  <View style={styles.activationCameraPanel}>
-                    <View style={styles.activationProgressRow}>
-                      <View style={[styles.activationStepPill, styles.activationStepPillActive]}>
-                        <Text style={styles.activationStepPillText}>1 Frente</Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.activationStepPill,
-                          activationStep === "back" && styles.activationStepPillActive,
-                        ]}
-                      >
-                        <Text style={styles.activationStepPillText}>2 Reverso</Text>
-                      </View>
-                      <View style={styles.activationStepPill}>
-                        <Text style={styles.activationStepPillText}>3 Firma</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.activationTitle}>
-                      {activationStep === "front"
-                        ? "Coloca el frente de tu INE dentro del rectangulo"
-                        : "Ahora coloca el reverso de tu INE dentro del rectangulo"}
-                    </Text>
-                    <View style={styles.activationCameraShell}>
-                      <CameraView
-                        key={activationStep}
-                        ref={cameraRef}
-                        active={activationCameraActive}
-                        animateShutter={!activationCaptureLoading}
-                        facing="back"
-                        onCameraReady={() => setActivationCameraReady(true)}
-                        onMountError={(cameraError) => {
-                          setActivationCameraActive(false);
-                          setActivationError(
-                            cameraError?.message ||
-                              "No se pudo iniciar la cámara. Cierra este panel e intenta de nuevo.",
-                          );
-                        }}
-                        style={styles.activationCamera}
-                      />
-                      <View pointerEvents="none" style={styles.ineOverlay}>
-                        <View style={styles.ineGuideCard}>
-                          <View style={styles.ineGuideTopRow}>
-                            <Text style={styles.ineGuideTitle}>INE</Text>
-                            <Text style={styles.ineGuideSide}>
-                              {activationStep === "front" ? "FRENTE" : "REVERSO"}
-                            </Text>
-                          </View>
-                          <View style={styles.ineGuidePhoto} />
-                          <View style={styles.ineGuideLines}>
-                            <View style={styles.ineGuideLineLong} />
-                            <View style={styles.ineGuideLineShort} />
-                          </View>
-                        </View>
-                        <Text style={styles.ineGuideHint}>
-                          Alinea la credencial completa, sin cortar esquinas
-                        </Text>
-                      </View>
-                      {activationCaptureHint ? (
-                        <View style={styles.activationNextOverlay}>
-                          <Text style={styles.activationNextText}>
-                            {activationCaptureHint}
-                          </Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    <View style={styles.activationActions}>
-                      <Pressable
-                        onPress={resetActivation}
-                        style={styles.activationSecondaryButton}
-                      >
-                        <Text style={styles.activationSecondaryButtonText}>
-                          Cancelar
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        disabled={activationCaptureLoading || !activationCameraReady}
-                        onPress={handleCaptureIne}
-                        style={[
-                          styles.activationPrimaryButton,
-                          (activationCaptureLoading || !activationCameraReady) &&
-                            styles.mapButtonDisabled,
-                        ]}
-                      >
-                        {activationCaptureLoading ? (
-                          <ActivityIndicator color="#fff8e8" />
-                        ) : (
-                          <Text style={styles.activationPrimaryButtonText}>
-                            {activationStep === "front"
-                              ? "Tomar frente"
-                              : "Tomar reverso"}
-                          </Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : null}
-
-                {!qrActivo && activationStep === "signature" ? (
-                  <View style={styles.signaturePanel}>
-                    <Text style={styles.activationTitle}>
-                      Firma con tu dedo
-                    </Text>
-                    {activationCaptureHint ? (
-                      <View style={styles.activationNextBanner}>
-                        <Text style={styles.activationNextBannerText}>
-                          {activationCaptureHint}
-                        </Text>
-                      </View>
-                    ) : null}
-                    <View style={styles.signatureBox}>
-                      <SignatureScreen
-                        ref={signatureRef}
-                        autoClear={false}
-                        backgroundColor="#fff8e8"
-                        clearText="Limpiar"
-                        confirmText="Guardar"
-                        descriptionText=""
-                        imageType="image/png"
-                        maxWidth={3.2}
-                        minWidth={1.2}
-                        onBegin={() => {
-                          setSignatureScrollLocked(true);
-                          setActivationError("");
-                        }}
-                        onEmpty={() => {
-                          signatureSubmitPendingRef.current = false;
-                          setSignatureScrollLocked(false);
-                          setActivationLoading(false);
-                          setSignatureImage("");
-                          setActivationError("Firma con tu dedo antes de guardar la activación.");
-                        }}
-                        onEnd={() => {
-                          setSignatureScrollLocked(false);
-                          signatureRef.current?.readSignature();
-                        }}
-                        onError={(signatureError) => {
-                          signatureSubmitPendingRef.current = false;
-                          setSignatureScrollLocked(false);
-                          setActivationLoading(false);
-                          setActivationError(
-                            signatureError instanceof Error
-                              ? signatureError.message
-                              : "No se pudo abrir el panel de firma.",
-                          );
-                        }}
-                        onOK={(signature) => {
-                          setSignatureScrollLocked(false);
-                          setSignatureImage(signature);
-                          if (signatureSubmitPendingRef.current) {
-                            signatureSubmitPendingRef.current = false;
-                            void saveActivationWithSignature(signature);
-                          }
-                        }}
-                        penColor="#24160f"
-                        scrollable={false}
-                        style={styles.signatureCanvas}
-                        webStyle={signatureCanvasWebStyle}
-                        webviewProps={{
-                          androidLayerType: "hardware",
-                          cacheEnabled: true,
-                          nestedScrollEnabled: false,
-                          overScrollMode: "never",
-                          scrollEnabled: false,
-                        }}
-                      />
-                    </View>
-                    <View style={styles.activationActions}>
-                      <Pressable
-                        onPress={() => {
-                          setSignatureScrollLocked(false);
-                          setSignatureImage("");
-                          signatureRef.current?.clearSignature();
-                        }}
-                        style={styles.activationSecondaryButton}
-                      >
-                        <Text style={styles.activationSecondaryButtonText}>
-                          Limpiar firma
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        disabled={
-                          activationLoading || !signatureImage
-                        }
-                        onPress={handleSubmitActivation}
-                        style={({ pressed }) => [
-                          styles.activationPrimaryButton,
-                          styles.activationSaveButton,
-                          (pressed ||
-                            activationLoading ||
-                            !signatureImage) &&
-                            styles.mapButtonDisabled,
-                        ]}
-                      >
-                        {activationLoading ? (
-                          <ActivityIndicator color="#fff8e8" />
-                        ) : (
-                          <Text style={styles.activationPrimaryButtonText}>
-                            Guardar activación
-                          </Text>
-                        )}
-                      </Pressable>
-                    </View>
-                  </View>
-                ) : null}
-
-                {activationError ? (
+                {activationError && !activationModalVisible ? (
                   <Text style={styles.warning}>{activationError}</Text>
                 ) : null}
-                {activationMessage ? (
+                {activationMessage && !activationModalVisible ? (
                   <Text style={styles.activationMessage}>
                     {activationMessage}
                   </Text>
@@ -1438,6 +1967,8 @@ export default function ClienteScreen() {
           ) : null}
         </>
       )}
+
+      {renderActivationModal()}
     </ScrollView>
   );
 }
@@ -1468,6 +1999,7 @@ const styles = StyleSheet.create({
   content: {
     gap: 18,
     padding: 24,
+    paddingBottom: 40,
   },
   centered: {
     alignItems: "center",
@@ -1813,195 +2345,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "900",
   },
-  activationCameraPanel: {
-    gap: 12,
-  },
-  activationTitle: {
-    color: "#24160f",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  activationProgressRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  activationStepPill: {
-    backgroundColor: "#6f5639",
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 32,
-    justifyContent: "center",
-    paddingHorizontal: 10,
-  },
-  activationStepPillActive: {
-    backgroundColor: "#CD1125",
-  },
-  activationStepPillText: {
-    color: "#fff8e8",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  activationCameraShell: {
-    backgroundColor: "#24160f",
-    borderColor: "#3b2619",
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 390,
-    overflow: "hidden",
-    position: "relative",
-  },
-  activationCamera: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  ineOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 18,
-  },
-  ineGuideCard: {
-    aspectRatio: 1.58,
-    borderColor: "#fff8e8",
-    borderRadius: 8,
-    borderStyle: "dashed",
-    borderWidth: 3,
-    justifyContent: "space-between",
-    maxWidth: 360,
-    padding: 14,
-    width: "88%",
-  },
-  ineGuideTopRow: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  ineGuideTitle: {
-    color: "#fff8e8",
-    fontSize: 26,
-    fontWeight: "900",
-  },
-  ineGuideSide: {
-    color: "#d5a84f",
-    fontSize: 12,
-    fontWeight: "900",
-  },
-  ineGuidePhoto: {
-    backgroundColor: "rgba(255, 248, 232, 0.25)",
-    borderColor: "rgba(255, 248, 232, 0.75)",
-    borderRadius: 8,
-    borderWidth: 1,
-    height: "38%",
-    width: "28%",
-  },
-  ineGuideLines: {
-    gap: 7,
-  },
-  ineGuideLineLong: {
-    backgroundColor: "rgba(255, 248, 232, 0.75)",
-    borderRadius: 8,
-    height: 7,
-    width: "64%",
-  },
-  ineGuideLineShort: {
-    backgroundColor: "rgba(255, 248, 232, 0.55)",
-    borderRadius: 8,
-    height: 7,
-    width: "46%",
-  },
-  ineGuideHint: {
-    backgroundColor: "rgba(36, 22, 15, 0.82)",
-    borderRadius: 8,
-    color: "#fff8e8",
-    fontSize: 13,
-    fontWeight: "800",
-    marginTop: 14,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    textAlign: "center",
-  },
-  activationNextOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    alignItems: "center",
-    backgroundColor: "rgba(21, 128, 61, 0.74)",
-    justifyContent: "center",
-    padding: 20,
-  },
-  activationNextText: {
-    color: "#fff8e8",
-    fontSize: 20,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  activationNextBanner: {
-    backgroundColor: "#15803d",
-    borderColor: "#166534",
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  activationNextBannerText: {
-    color: "#fff8e8",
-    fontSize: 14,
-    fontWeight: "900",
-    textAlign: "center",
-  },
-  activationActions: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-  },
-  activationPrimaryButton: {
-    alignItems: "center",
-    backgroundColor: "#CD1125",
-    borderColor: "#6f141f",
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 44,
-    paddingHorizontal: 14,
-  },
-  activationSaveButton: {
-    backgroundColor: "#15803d",
-    borderColor: "#166534",
-  },
-  activationPrimaryButtonText: {
-    color: "#fff8e8",
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  activationSecondaryButton: {
-    alignItems: "center",
-    backgroundColor: "#fff8e8",
-    borderColor: "#CD1125",
-    borderRadius: 8,
-    borderWidth: 1,
-    justifyContent: "center",
-    minHeight: 44,
-    paddingHorizontal: 14,
-  },
-  activationSecondaryButtonText: {
-    color: "#CD1125",
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  signaturePanel: {
-    gap: 12,
-  },
-  signatureBox: {
-    backgroundColor: "#fff8e8",
-    borderColor: "#3b2619",
-    borderRadius: 8,
-    borderWidth: 1,
-    height: 260,
-    overflow: "hidden",
-  },
-  signatureCanvas: {
-    height: 260,
-    width: "100%",
-  },
   activationMessage: {
     color: "#15803d",
     fontSize: 14,
@@ -2023,6 +2366,276 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "800",
   },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: "#f3ead5",
+    paddingTop: Platform.OS === "ios" ? 0 : 0,
+  },
+  modalStepContainer: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
+    justifyContent: "center",
+    paddingTop: Platform.OS === "ios" ? 40 : 20,
+  },
+  modalHeader: {
+    paddingTop: 4,
+    paddingBottom: 8,
+    paddingHorizontal: 4,
+  },
+  modalTitle: {
+    color: "#24160f",
+    fontSize: 20,
+    fontWeight: "900",
+  },
+  modalSubtitle: {
+    color: "#6f5639",
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  modalCameraContainer: {
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#24160f",
+    height: SCREEN_HEIGHT * 0.45,
+    width: "100%",
+    alignSelf: "center",
+  },
+  cameraView: {
+    flex: 1,
+    width: "100%",
+    height: "100%",
+  },
+  cameraLoadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#24160f",
+  },
+  modalReviewContainer: {
+    borderRadius: 12,
+    overflow: "hidden",
+    backgroundColor: "#e7d7b5",
+    height: SCREEN_HEIGHT * 0.35,
+    width: "100%",
+    alignSelf: "center",
+  },
+  modalReviewImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain",
+  },
+  modalSignatureContainer: {
+    backgroundColor: "#fff8e8",
+    borderRadius: 12,
+    overflow: "hidden",
+    borderWidth: 1,
+    borderColor: "#3b2619",
+    height: SCREEN_HEIGHT * 0.35,
+    width: "100%",
+    alignSelf: "center",
+  },
+  modalSignatureCanvas: {
+    width: "100%",
+    height: "100%",
+  },
+  modalSignaturePreview: {
+    width: "100%",
+    height: "100%",
+    borderRadius: 8,
+    backgroundColor: "#fff8e8",
+  },
+  modalActions: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    paddingTop: 8,
+    paddingBottom: Platform.OS === "ios" ? 20 : 12,
+    justifyContent: "center",
+    marginHorizontal: 4,
+  },
+  modalPrimaryButton: {
+    alignItems: "center",
+    backgroundColor: "#CD1125",
+    borderColor: "#6f141f",
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 24,
+    flex: 1,
+    minWidth: 100,
+  },
+  modalPrimaryButtonText: {
+    color: "#fff8e8",
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  modalSecondaryButton: {
+    alignItems: "center",
+    backgroundColor: "#fff8e8",
+    borderColor: "#CD1125",
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: "center",
+    minHeight: 48,
+    paddingHorizontal: 16,
+    flex: 1,
+    minWidth: 80,
+  },
+  modalSecondaryButtonText: {
+    color: "#CD1125",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  modalCancelButton: {
+    borderColor: "#6f5639",
+    flex: 0.6,
+  },
+  modalRetakeButton: {
+    borderColor: "#6f5639",
+    flex: 0.6,
+  },
+  modalBackButton: {
+    borderColor: "#6f5639",
+  },
+  modalClearButton: {
+    borderColor: "#6f5639",
+    flex: 0.5,
+  },
+  modalSaveButton: {
+    backgroundColor: "#15803d",
+    borderColor: "#166534",
+    flex: 1,
+  },
+  modalButtonDisabled: {
+    opacity: 0.5,
+  },
+  modalError: {
+    color: "#CD1125",
+    fontSize: 14,
+    lineHeight: 20,
+    paddingVertical: 4,
+    textAlign: "center",
+  },
+  modalSuccess: {
+    color: "#15803d",
+    fontSize: 14,
+    fontWeight: "800",
+    lineHeight: 20,
+    paddingVertical: 4,
+    textAlign: "center",
+  },
+  modalSummaryScroll: {
+    flex: 1,
+    paddingHorizontal: 4,
+    maxHeight: SCREEN_HEIGHT * 0.45,
+  },
+  modalSummaryLabel: {
+    color: "#24160f",
+    fontSize: 16,
+    fontWeight: "700",
+    marginTop: 12,
+    marginBottom: 6,
+  },
+  modalSummaryImage: {
+    width: "100%",
+    height: SCREEN_HEIGHT * 0.2,
+    borderRadius: 10,
+    backgroundColor: "#e7d7b5",
+    marginBottom: 8,
+    resizeMode: "contain",
+  },
+  modalSummarySignature: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "contain",
+  },
+  modalSummarySignatureWrapper: {
+    width: "100%",
+    height: SCREEN_HEIGHT * 0.15,
+    backgroundColor: "#fff8e8",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#d5a84f",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 8,
+    marginBottom: 8,
+  },
+  modalSummarySignaturePlaceholder: {
+    color: "#6f5639",
+    fontSize: 14,
+    textAlign: "center",
+  },
+  cameraOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: "column",
+  },
+  overlayTop: {
+    height: "15%",
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  overlayMiddle: {
+    flexDirection: "row",
+    height: CARD_FRAME_HEIGHT,
+  },
+  overlaySide: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  overlayBottom: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.55)",
+    alignItems: "center",
+    paddingTop: 14,
+  },
+  overlayHint: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
+    opacity: 0.85,
+  },
+  cardFrame: {
+    width: CARD_FRAME_WIDTH,
+    height: CARD_FRAME_HEIGHT,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.35)",
+  },
+  corner: {
+    position: "absolute",
+    width: 22,
+    height: 22,
+    borderColor: "#FFFFFF",
+  },
+  cornerTL: {
+    top: -2,
+    left: -2,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 10,
+  },
+  cornerTR: {
+    top: -2,
+    right: -2,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 10,
+  },
+  cornerBL: {
+    bottom: -2,
+    left: -2,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 10,
+  },
+  cornerBR: {
+    bottom: -2,
+    right: -2,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 10,
+  },
 });
-
-
