@@ -63,6 +63,8 @@ type ActivationStep =
 
 const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
 const MAX_STORED_PAYMENT_REQUESTS = 80;
+const PAYMENT_TIMEOUT_SECONDS = 60;
+const STATUS_MESSAGE_CLEAR_DELAY_MS = 3000;
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
@@ -227,6 +229,9 @@ export default function ClienteScreen() {
     "approve" | "reject" | null
   >(null);
   const [paymentActionMessage, setPaymentActionMessage] = useState("");
+  const [paymentTimeoutSeconds, setPaymentTimeoutSeconds] = useState(
+    PAYMENT_TIMEOUT_SECONDS,
+  );
   const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] =
     useState(false);
   const [activationStep, setActivationStep] = useState<ActivationStep>("idle");
@@ -258,12 +263,24 @@ export default function ClienteScreen() {
   const profileRef = useRef<ClienteProfile | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
   const promptedPaymentRef = useRef<string | number | null>(null);
+  const paymentTimeoutRef = useRef<number | null>(null);
   const handledPaymentRequestsRef = useRef(new Set<string>());
   const profileRequestIdRef = useRef(0);
   const profileRefreshInFlightRef = useRef(false);
   const registeredPushTokenForSessionRef = useRef("");
   const sessionToken = session?.token || "";
   const sessionUserId = session?.user.id_usuario || 0;
+  const statusMessageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const clearPaymentMessage = useCallback(() => {
+    if (statusMessageTimeoutRef.current) {
+      clearTimeout(statusMessageTimeoutRef.current);
+      statusMessageTimeoutRef.current = null;
+    }
+    setPaymentActionMessage("");
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -328,6 +345,62 @@ export default function ClienteScreen() {
   useEffect(() => {
     paymentRequestRef.current = paymentRequest;
   }, [paymentRequest]);
+
+  useEffect(() => {
+    if (
+      !paymentRequest ||
+      paymentRequest.status === "approved" ||
+      paymentRequest.status === "rejected"
+    ) {
+      if (paymentTimeoutRef.current) {
+        clearInterval(paymentTimeoutRef.current);
+        paymentTimeoutRef.current = null;
+      }
+      setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
+      return;
+    }
+
+    setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
+    if (paymentTimeoutRef.current) {
+      clearInterval(paymentTimeoutRef.current);
+      paymentTimeoutRef.current = null;
+    }
+
+    paymentTimeoutRef.current = setInterval(() => {
+      setPaymentTimeoutSeconds((prev) => {
+        const next = prev - 1;
+        if (next <= 0) {
+          if (paymentTimeoutRef.current) {
+            clearInterval(paymentTimeoutRef.current);
+            paymentTimeoutRef.current = null;
+          }
+          setPaymentRequest(null);
+          setPaymentActionMessage(
+            "Tiempo de espera agotado. El pago ha sido rechazado.",
+          );
+          if (statusMessageTimeoutRef.current) {
+            clearTimeout(statusMessageTimeoutRef.current);
+          }
+          statusMessageTimeoutRef.current = setTimeout(() => {
+            setPaymentActionMessage("");
+          }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
+          if (paymentRequest?.transactionId) {
+            persistHandledPaymentRequest(paymentRequest.transactionId);
+          }
+          return 0;
+        }
+        return next;
+      });
+    }, 1000) as unknown as number;
+
+    return () => {
+      if (paymentTimeoutRef.current) {
+        clearInterval(paymentTimeoutRef.current);
+        paymentTimeoutRef.current = null;
+      }
+      setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
+    };
+  }, [paymentRequest, persistHandledPaymentRequest]);
 
   useEffect(() => {
     const isCameraStep =
@@ -942,6 +1015,12 @@ export default function ClienteScreen() {
 
           persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago aprobado correctamente.");
+          if (statusMessageTimeoutRef.current) {
+            clearTimeout(statusMessageTimeoutRef.current);
+          }
+          statusMessageTimeoutRef.current = setTimeout(() => {
+            setPaymentActionMessage("");
+          }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
         } else {
           await rejectPaymentRequest(
             activeSession.token,
@@ -949,6 +1028,12 @@ export default function ClienteScreen() {
           );
           persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago rechazado correctamente.");
+          if (statusMessageTimeoutRef.current) {
+            clearTimeout(statusMessageTimeoutRef.current);
+          }
+          statusMessageTimeoutRef.current = setTimeout(() => {
+            setPaymentActionMessage("");
+          }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
         }
 
         setPaymentRequest(null);
@@ -958,6 +1043,12 @@ export default function ClienteScreen() {
           setPaymentRequest(null);
           promptedPaymentRef.current = null;
           setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+          if (statusMessageTimeoutRef.current) {
+            clearTimeout(statusMessageTimeoutRef.current);
+          }
+          statusMessageTimeoutRef.current = setTimeout(() => {
+            setPaymentActionMessage("");
+          }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
           await refreshClienteProfile(sessionRef.current || activeSession);
           return;
         }
@@ -967,6 +1058,12 @@ export default function ClienteScreen() {
             ? paymentError.message
             : "No se pudo responder el pago.",
         );
+        if (statusMessageTimeoutRef.current) {
+          clearTimeout(statusMessageTimeoutRef.current);
+        }
+        statusMessageTimeoutRef.current = setTimeout(() => {
+          setPaymentActionMessage("");
+        }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
       } finally {
         setPaymentActionLoading(null);
       }
@@ -1036,6 +1133,12 @@ export default function ClienteScreen() {
         setPaymentRequest(null);
         promptedPaymentRef.current = null;
         setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+        if (statusMessageTimeoutRef.current) {
+          clearTimeout(statusMessageTimeoutRef.current);
+        }
+        statusMessageTimeoutRef.current = setTimeout(() => {
+          setPaymentActionMessage("");
+        }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
         return;
       }
 
@@ -1790,6 +1893,16 @@ export default function ClienteScreen() {
                   )}
                 </Pressable>
               </View>
+              {paymentRequest && !paymentRequest.status ? (
+                <View style={styles.timeoutContainer}>
+                  <Text style={styles.timeoutLabel}>
+                    Tiempo restante para aprobar
+                  </Text>
+                  <Text style={styles.timeoutValue}>
+                    {paymentTimeoutSeconds}s
+                  </Text>
+                </View>
+              ) : null}
             </View>
           ) : null}
 
@@ -1806,6 +1919,12 @@ export default function ClienteScreen() {
                     {displayedBalance === null
                       ? "Consultando..."
                       : `$${formatBalance(displayedBalance)}`}
+                  </Text>
+                </View>
+                <View style={[styles.balancePanel, styles.consumoPanel]}>
+                  <Text style={styles.consumoLabel}>Consumo diario</Text>
+                  <Text style={styles.consumoValue}>
+                    {displayedBalance === null ? "Consultando..." : "$0.00"}
                   </Text>
                 </View>
               </View>
@@ -2192,7 +2311,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   balanceGrid: {
-    gap: 12,
+    gap: 8,
   },
   balancePanel: {
     backgroundColor: "#24160f",
@@ -2637,5 +2756,42 @@ const styles = StyleSheet.create({
     borderBottomWidth: 3,
     borderRightWidth: 3,
     borderBottomRightRadius: 10,
+  },
+  timeoutContainer: {
+    alignItems: "center",
+    backgroundColor: "#f9efd9",
+    borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    padding: 12,
+    marginTop: 8,
+  },
+  timeoutLabel: {
+    color: "#3b2619",
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  timeoutValue: {
+    color: "#CD1125",
+    fontSize: 22,
+    fontWeight: "900",
+  },
+  consumoPanel: {
+    backgroundColor: "#1a1a2e",
+    borderColor: "#d5a84f",
+  },
+  consumoValue: {
+    color: "#4fc3f7",
+    fontSize: 38,
+    fontWeight: "900",
+    lineHeight: 44,
+  },
+  consumoLabel: {
+    color: "#d5a84f",
+    fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
   },
 });
