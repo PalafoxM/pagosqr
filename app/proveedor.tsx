@@ -20,7 +20,10 @@ import {
   isHotelProfile,
   isProviderProfile,
 } from "@/services/auth";
-import { registerPushToken } from "@/services/notifications";
+import {
+  getTransactionTime,
+  registerPushToken,
+} from "@/services/notifications";
 import {
   ChargeResult,
   createProviderCharge,
@@ -117,6 +120,7 @@ export default function ProveedorScreen() {
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
   const timeoutIntervalRef = useRef<number | null>(null);
   const clearTimeoutRef = useRef<number | null>(null);
+  const clearFormTimeoutRef = useRef<number | null>(null);
   const statusMessageTimeoutRef = useRef<number | null>(null);
   const parsedClient = useMemo(() => parseClientQrPayload(qrCode), [qrCode]);
 
@@ -146,9 +150,20 @@ export default function ProveedorScreen() {
     }
   }, []);
 
-  const handleResetCharge = useCallback(() => {
-    clearForm();
+  const scheduleClearForm = useCallback(() => {
+    if (clearFormTimeoutRef.current) {
+      clearTimeout(clearFormTimeoutRef.current);
+      clearFormTimeoutRef.current = null;
+    }
+    clearFormTimeoutRef.current = setTimeout(() => {
+      clearForm();
+      clearFormTimeoutRef.current = null;
+    }, AUTO_CLEAR_DELAY_MS) as unknown as number;
   }, [clearForm]);
+
+  const handleResetCharge = useCallback(() => {
+    scheduleClearForm();
+  }, [scheduleClearForm]);
 
   const clearStatusMessage = useCallback(() => {
     if (statusMessageTimeoutRef.current) {
@@ -291,194 +306,104 @@ export default function ProveedorScreen() {
 
   useEffect(() => {
     if (!result || result.status !== "pending") {
+      if (timeoutIntervalRef.current) {
+        clearInterval(timeoutIntervalRef.current);
+        timeoutIntervalRef.current = null;
+      }
+      setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
       return;
     }
 
     let mounted = true;
     const transactionId = result.id || result.transaction_id;
+    if (!transactionId) return;
 
-    if (!transactionId) {
-      return;
-    }
-
-    const pollStatus = async () => {
+    const syncBackendTimer = async () => {
+      if (!session) return;
       try {
-        const nextResult = await getProviderChargeStatus(
-          session!.token,
-          transactionId,
-        );
+        const timeData = await getTransactionTime(session.token, transactionId);
+        if (!mounted) return;
 
-        if (mounted && nextResult.status && nextResult.status !== "pending") {
-          setResult((currentResult) => ({
-            ...currentResult,
-            ...nextResult,
-            supportsStatusPolling: false,
-          }));
+        setRemainingSeconds(timeData.remaining_seconds);
 
-          if (nextResult.status === "approved") {
-            setShowSuccessMessage(true);
-            if (statusMessageTimeoutRef.current) {
-              clearTimeout(statusMessageTimeoutRef.current);
-            }
-            statusMessageTimeoutRef.current = setTimeout(() => {
-              if (mounted) {
-                setShowSuccessMessage(false);
-              }
-            }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-          } else if (nextResult.status === "rejected") {
-            setError("El pago fue rechazado por el cliente.");
-            if (statusMessageTimeoutRef.current) {
-              clearTimeout(statusMessageTimeoutRef.current);
-            }
-            statusMessageTimeoutRef.current = setTimeout(() => {
-              if (mounted) {
-                setError("");
-              }
-            }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-          }
-
-          if (clearTimeoutRef.current) {
-            clearTimeout(clearTimeoutRef.current);
-          }
-          clearTimeoutRef.current = setTimeout(() => {
-            if (mounted) {
-              clearForm();
-            }
-          }, AUTO_CLEAR_DELAY_MS) as unknown as number;
-        }
-      } catch (statusError) {
-        console.warn("No se pudo consultar estatus del cobro.", statusError);
-      }
-    };
-
-    pollStatus();
-    const intervalId = setInterval(pollStatus, 3000);
-
-    return () => {
-      mounted = false;
-      clearInterval(intervalId);
-    };
-  }, [result, session, clearForm]);
-
-  useEffect(() => {
-    if (!result || result.status !== "pending") {
-      if (timeoutIntervalRef.current) {
-        clearInterval(timeoutIntervalRef.current);
-        timeoutIntervalRef.current = null;
-      }
-      setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
-      return;
-    }
-
-    setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
-    if (timeoutIntervalRef.current) {
-      clearInterval(timeoutIntervalRef.current);
-      timeoutIntervalRef.current = null;
-    }
-
-    let startTime = Date.now();
-    let notificationReceived = false;
-
-    const checkNotificationStatus = async () => {
-      try {
-        const transactionId = result.id || result.transaction_id;
-        if (!transactionId) return;
-
-        const statusResult = await getProviderChargeStatus(
-          session!.token,
-          transactionId,
-        );
-
-        if (statusResult.status !== "pending") {
-          setResult((currentResult) => ({
-            ...currentResult,
-            ...statusResult,
-            supportsStatusPolling: false,
-          }));
-          if (statusResult.status === "approved") {
-            setShowSuccessMessage(true);
-            if (statusMessageTimeoutRef.current) {
-              clearTimeout(statusMessageTimeoutRef.current);
-            }
-            statusMessageTimeoutRef.current = setTimeout(() => {
-              setShowSuccessMessage(false);
-            }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-          } else if (statusResult.status === "rejected") {
-            setError("El pago fue rechazado por el cliente.");
-            if (statusMessageTimeoutRef.current) {
-              clearTimeout(statusMessageTimeoutRef.current);
-            }
-            statusMessageTimeoutRef.current = setTimeout(() => {
-              setError("");
-            }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-          }
-          if (clearTimeoutRef.current) {
-            clearTimeout(clearTimeoutRef.current);
-          }
-          clearTimeoutRef.current = setTimeout(() => {
-            clearForm();
-          }, AUTO_CLEAR_DELAY_MS) as unknown as number;
+        if (timeData.status !== "pending" || timeData.remaining_seconds <= 0) {
           if (timeoutIntervalRef.current) {
             clearInterval(timeoutIntervalRef.current);
             timeoutIntervalRef.current = null;
           }
-          return;
-        }
-      } catch {}
-    };
 
-    const updateTimer = () => {
-      const elapsed = Math.floor((Date.now() - startTime) / 1000);
-      const remaining = Math.max(0, PAYMENT_TIMEOUT_SECONDS - elapsed);
+          try {
+            const finalStatus = await getProviderChargeStatus(
+              session.token,
+              transactionId,
+            );
+            if (!mounted) return;
 
-      if (remaining <= 0) {
-        if (timeoutIntervalRef.current) {
-          clearInterval(timeoutIntervalRef.current);
-          timeoutIntervalRef.current = null;
-        }
-        setResult((currentResult) => {
-          if (currentResult?.status === "pending") {
-            return {
-              ...currentResult,
-              status: "rejected",
-            };
+            setResult((curr) => ({
+              ...curr,
+              ...finalStatus,
+              supportsStatusPolling: false,
+            }));
+
+            if (
+              finalStatus.status === "approved" ||
+              timeData.status === "autorizado"
+            ) {
+              setShowSuccessMessage(true);
+              scheduleClearForm();
+            } else {
+              const rejectedReason = (finalStatus as any).rejected_reason || "";
+              if (rejectedReason === "Rechazado por cliente") {
+                setError("El pago fue rechazado por el cliente.");
+              } else {
+                setError("Tiempo de espera agotado. El pago fue rechazado.");
+              }
+              scheduleClearForm();
+            }
+          } catch (e) {
+            if (mounted) {
+              setResult((curr) =>
+                curr?.status === "pending"
+                  ? { ...curr, status: "rejected" }
+                  : curr,
+              );
+              setError("Tiempo de espera agotado. El pago fue rechazado.");
+            }
           }
-          return currentResult;
-        });
-        setError("Tiempo de espera agotado. El pago ha sido rechazado.");
-        if (statusMessageTimeoutRef.current) {
-          clearTimeout(statusMessageTimeoutRef.current);
-        }
-        statusMessageTimeoutRef.current = setTimeout(() => {
-          setError("");
-        }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-        if (clearTimeoutRef.current) {
-          clearTimeout(clearTimeoutRef.current);
-        }
-        clearTimeoutRef.current = setTimeout(() => {
-          clearForm();
-        }, AUTO_CLEAR_DELAY_MS) as unknown as number;
-        setRemainingSeconds(0);
-        return;
-      }
 
-      setRemainingSeconds(remaining);
+          if (statusMessageTimeoutRef.current) {
+            clearTimeout(statusMessageTimeoutRef.current);
+          }
+          statusMessageTimeoutRef.current = setTimeout(() => {
+            setShowSuccessMessage(false);
+            setError("");
+            scheduleClearForm();
+          }, AUTO_CLEAR_DELAY_MS) as unknown as number;
+
+          if (clearTimeoutRef.current) {
+            clearTimeout(clearTimeoutRef.current);
+          }
+        }
+      } catch (err) {
+        console.warn("Error leyendo reloj del backend", err);
+      }
     };
 
-    const statusCheckInterval = setInterval(checkNotificationStatus, 2000);
-    const timerInterval = setInterval(updateTimer, 1000);
-
-    timeoutIntervalRef.current = timerInterval as unknown as number;
+    syncBackendTimer();
+    timeoutIntervalRef.current = setInterval(
+      syncBackendTimer,
+      1000,
+    ) as unknown as number;
 
     return () => {
-      clearInterval(statusCheckInterval);
+      mounted = false;
       if (timeoutIntervalRef.current) {
         clearInterval(timeoutIntervalRef.current);
         timeoutIntervalRef.current = null;
       }
       setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
     };
-  }, [result, session, clearForm]);
+  }, [result, session, scheduleClearForm]);
 
   const subtotal = useMemo(() => moneyFromText(amount), [amount]);
   const tipAmount = useMemo(
@@ -555,13 +480,8 @@ export default function ProveedorScreen() {
         }
         statusMessageTimeoutRef.current = setTimeout(() => {
           setShowSuccessMessage(false);
+          scheduleClearForm();
         }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-        if (clearTimeoutRef.current) {
-          clearTimeout(clearTimeoutRef.current);
-        }
-        clearTimeoutRef.current = setTimeout(() => {
-          clearForm();
-        }, AUTO_CLEAR_DELAY_MS) as unknown as number;
       } else if (chargeResult.status === "rejected") {
         setError("El pago fue rechazado por el cliente.");
         if (statusMessageTimeoutRef.current) {
@@ -569,13 +489,8 @@ export default function ProveedorScreen() {
         }
         statusMessageTimeoutRef.current = setTimeout(() => {
           setError("");
+          scheduleClearForm();
         }, STATUS_CLEAR_DELAY_MS) as unknown as number;
-        if (clearTimeoutRef.current) {
-          clearTimeout(clearTimeoutRef.current);
-        }
-        clearTimeoutRef.current = setTimeout(() => {
-          clearForm();
-        }, AUTO_CLEAR_DELAY_MS) as unknown as number;
       }
 
       const providerRef = session.user.no_proveedor || session.user.id_usuario;
@@ -597,6 +512,7 @@ export default function ProveedorScreen() {
       }
       statusMessageTimeoutRef.current = setTimeout(() => {
         setError("");
+        scheduleClearForm();
       }, STATUS_CLEAR_DELAY_MS) as unknown as number;
     } finally {
       setSubmitting(false);

@@ -63,7 +63,8 @@ type NotificationPayload = {
   };
 };
 
-const isExpoGoAndroid = Constants.appOwnership === "expo" && Platform.OS === "android";
+const isExpoGoAndroid =
+  Constants.appOwnership === "expo" && Platform.OS === "android";
 const PUSH_REGISTRATION_KEY = "pagosfic.push.registration";
 const LAST_NOTIFICATION_MAX_AGE_MS = 15000;
 let notificationHandlerConfigured = false;
@@ -92,20 +93,21 @@ const getApiBaseUrl = () => {
   return API_BASE_URL.replace(/\/$/, "");
 };
 
-const getStoredPushRegistration = async (): Promise<StoredPushRegistration | null> => {
-  const stored = await SecureStore.getItemAsync(PUSH_REGISTRATION_KEY);
+const getStoredPushRegistration =
+  async (): Promise<StoredPushRegistration | null> => {
+    const stored = await SecureStore.getItemAsync(PUSH_REGISTRATION_KEY);
 
-  if (!stored) {
-    return null;
-  }
+    if (!stored) {
+      return null;
+    }
 
-  try {
-    return JSON.parse(stored) as StoredPushRegistration;
-  } catch {
-    await SecureStore.deleteItemAsync(PUSH_REGISTRATION_KEY);
-    return null;
-  }
-};
+    try {
+      return JSON.parse(stored) as StoredPushRegistration;
+    } catch {
+      await SecureStore.deleteItemAsync(PUSH_REGISTRATION_KEY);
+      return null;
+    }
+  };
 
 const saveStoredPushRegistration = async (
   registration: StoredPushRegistration,
@@ -158,7 +160,7 @@ async function loadNotifications(): Promise<NotificationsModule | null> {
       handleNotification: async () => ({
         shouldPlaySound: true,
         shouldSetBadge: false,
-        shouldShowBanner: true,
+        shouldShowBanner: false,
         shouldShowList: true,
       }),
     });
@@ -171,7 +173,10 @@ async function loadNotifications(): Promise<NotificationsModule | null> {
 export const isPaymentRequestNotification = (
   data: unknown,
 ): data is PaymentRequestNotification => {
-  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification) : {};
+  const payload =
+    data && typeof data === "object"
+      ? (data as PaymentRequestNotification)
+      : {};
 
   return payload.type === "PAYMENT_REQUEST" && Boolean(payload.transactionId);
 };
@@ -179,7 +184,8 @@ export const isPaymentRequestNotification = (
 export const isBalanceUpdateNotification = (
   data: unknown,
 ): data is BalanceUpdateNotification => {
-  const payload = data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
+  const payload =
+    data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
 
   return (
     (payload.type === "PAYMENT_COMPLETED" ||
@@ -193,7 +199,10 @@ export const isBalanceUpdateNotification = (
 
 const getNotificationResponseKey = (notification: NotificationPayload) => {
   const data = notification.request.content.data;
-  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification & BalanceUpdateNotification) : {};
+  const payload =
+    data && typeof data === "object"
+      ? (data as PaymentRequestNotification & BalanceUpdateNotification)
+      : {};
 
   return [
     payload.type || "",
@@ -206,7 +215,9 @@ const getNotificationResponseKey = (notification: NotificationPayload) => {
   ].join(":");
 };
 
-const normalizePaymentRequestFromRow = (row: NotificationRow): PaymentRequestNotification | null => {
+const normalizePaymentRequestFromRow = (
+  row: NotificationRow,
+): PaymentRequestNotification | null => {
   let data: unknown = row.data || row.data_json;
 
   if (typeof data === "string") {
@@ -248,7 +259,9 @@ async function postAuthenticated<T>(
   const rawBody = await response.text();
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${rawBody || response.statusText}`);
+    throw new Error(
+      `HTTP ${response.status}: ${rawBody || response.statusText}`,
+    );
   }
 
   let result: ApiResponse<T>;
@@ -256,7 +269,9 @@ async function postAuthenticated<T>(
   try {
     result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
   } catch {
-    throw new Error(`La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+    throw new Error(
+      `La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`,
+    );
   }
 
   if (result.error) {
@@ -278,7 +293,9 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
   const rawBody = await response.text();
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${rawBody || response.statusText}`);
+    throw new Error(
+      `HTTP ${response.status}: ${rawBody || response.statusText}`,
+    );
   }
 
   let result: ApiResponse<T>;
@@ -286,7 +303,9 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
   try {
     result = (rawBody ? JSON.parse(rawBody) : {}) as ApiResponse<T>;
   } catch {
-    throw new Error(`La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`);
+    throw new Error(
+      `La API devolvió una respuesta no JSON: ${rawBody.slice(0, 300)}`,
+    );
   }
 
   if (result.error) {
@@ -296,7 +315,11 @@ async function getAuthenticated<T>(path: string, token: string): Promise<T> {
   return result.data as T;
 }
 
-async function savePushToken(token: string, expoPushToken: string, userId?: number) {
+async function savePushToken(
+  token: string,
+  expoPushToken: string,
+  userId?: number,
+) {
   const payload = {
     push_token: expoPushToken,
     platform: Platform.OS,
@@ -312,12 +335,26 @@ async function savePushToken(token: string, expoPushToken: string, userId?: numb
   });
 
   try {
-    const result = await postAuthenticated("/auth/register-token", token, payload);
-    console.log("[notifications] savePushToken /auth/register-token ok", result);
+    const result = await postAuthenticated(
+      "/auth/register-token",
+      token,
+      payload,
+    );
+    console.log(
+      "[notifications] savePushToken /auth/register-token ok",
+      result,
+    );
     return result;
   } catch (authError) {
-    console.warn("[notifications] /auth/register-token fallo, intentando fallback", authError);
-    const result = await postAuthenticated("/notifications/register-token", token, payload);
+    console.warn(
+      "[notifications] /auth/register-token fallo, intentando fallback",
+      authError,
+    );
+    const result = await postAuthenticated(
+      "/notifications/register-token",
+      token,
+      payload,
+    );
     console.log("[notifications] savePushToken fallback ok", result);
     return result;
   }
@@ -326,9 +363,10 @@ async function savePushToken(token: string, expoPushToken: string, userId?: numb
 export async function registerPushToken(token: string, userId?: number) {
   console.log("[notifications] registerPushToken inicio");
   const Notifications = await loadNotifications();
-  //console.log(Notifications)
   if (!Notifications) {
-    console.warn("[notifications] modulo no disponible, no se registra push token");
+    console.warn(
+      "[notifications] modulo no disponible, no se registra push token",
+    );
     return null;
   }
 
@@ -361,7 +399,9 @@ export async function registerPushToken(token: string, userId?: number) {
   console.log("[notifications] projectId", {
     projectId: projectId || null,
     hasEnvProjectId: Boolean(process.env.EXPO_PUBLIC_EAS_PROJECT_ID),
-    hasExpoConfigProjectId: Boolean(Constants.expoConfig?.extra?.eas?.projectId),
+    hasExpoConfigProjectId: Boolean(
+      Constants.expoConfig?.extra?.eas?.projectId,
+    ),
     hasEasConfigProjectId: Boolean(Constants.easConfig?.projectId),
   });
 
@@ -375,7 +415,8 @@ export async function registerPushToken(token: string, userId?: number) {
   let expoPushToken = "";
 
   try {
-    expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+    expoPushToken = (await Notifications.getExpoPushTokenAsync({ projectId }))
+      .data;
   } catch (error) {
     console.warn("[notifications] no se pudo obtener Expo Push Token", {
       message: getErrorMessage(error),
@@ -396,7 +437,9 @@ export async function registerPushToken(token: string, userId?: number) {
     storedRegistration.platform === Platform.OS &&
     storedRegistration.userId === (userId || 0)
   ) {
-    console.log("[notifications] push token coincide con cache local; revalidando en backend");
+    console.log(
+      "[notifications] push token coincide con cache local; revalidando en backend",
+    );
   }
 
   await savePushToken(token, expoPushToken, userId);
@@ -414,7 +457,10 @@ export const registerDeviceForPushNotifications = registerPushToken;
 export const shouldUseInAppPaymentPolling = () => __DEV__ && isExpoGoAndroid;
 
 export async function getPaymentRequestNotifications(token: string) {
-  const rows = await getAuthenticated<NotificationRow[]>("/notifications/my-notifications", token);
+  const rows = await getAuthenticated<NotificationRow[]>(
+    "/notifications/my-notifications",
+    token,
+  );
 
   return (rows || [])
     .map(normalizePaymentRequestFromRow)
@@ -430,8 +476,8 @@ export function observePaymentRequests(
   console.log("[notifications] observePaymentRequests iniciado");
   let cleanup = () => {};
   let disposed = false;
-  let lastHandledResponseKey = "";
   const observerStartedAt = Date.now();
+  const processedKeys = new Set<string>();
 
   const showPaymentRequest = (
     notification: NotificationPayload,
@@ -440,9 +486,19 @@ export function observePaymentRequests(
     const data = notification.request.content.data;
     console.log("[notifications] notificación recibida", data);
 
-    if (isPaymentRequestNotification(data)) {
-      onPaymentRequest(data, source);
+    if (!isPaymentRequestNotification(data)) {
+      return;
     }
+
+    const key = `${data.type}:${data.transactionId}`;
+
+    if (source === "received" && processedKeys.has(key)) {
+      console.log("[notifications] notificación duplicada ignorada", key);
+      return;
+    }
+
+    processedKeys.add(key);
+    onPaymentRequest(data, source);
   };
 
   loadNotifications()
@@ -454,43 +510,37 @@ export function observePaymentRequests(
       Notifications.getLastNotificationResponseAsync().then((response) => {
         if (response?.notification) {
           if (!isRecentNotification(response.notification, observerStartedAt)) {
-            console.log("[notifications] ultima respuesta antigua ignorada", response.notification.request.content.data);
+            console.log(
+              "[notifications] ultima respuesta antigua ignorada",
+              response.notification.request.content.data,
+            );
             return;
           }
 
-          const responseKey = getNotificationResponseKey(response.notification);
-
-          if (responseKey && responseKey === lastHandledResponseKey) {
-            console.log("[notifications] ultima respuesta ya procesada", response.notification.request.content.data);
-            return;
-          }
-
-          lastHandledResponseKey = responseKey;
-          console.log("[notifications] última respuesta de notificación", response.notification.request.content.data);
+          console.log(
+            "[notifications] última respuesta de notificación",
+            response.notification.request.content.data,
+          );
           showPaymentRequest(response.notification, "response");
         }
       });
 
-      const receivedSubscription = Notifications.addNotificationReceivedListener(
-        (notification) => {
-          console.log("[notifications] listener received", notification.request.content.data);
+      const receivedSubscription =
+        Notifications.addNotificationReceivedListener((notification) => {
+          console.log(
+            "[notifications] listener received",
+            notification.request.content.data,
+          );
           showPaymentRequest(notification, "received");
-        },
-      );
-      const responseSubscription = Notifications.addNotificationResponseReceivedListener(
-        (response) => {
-          const responseKey = getNotificationResponseKey(response.notification);
-
-          if (responseKey && responseKey === lastHandledResponseKey) {
-            console.log("[notifications] respuesta ya procesada", response.notification.request.content.data);
-            return;
-          }
-
-          lastHandledResponseKey = responseKey;
-          console.log("[notifications] listener response", response.notification.request.content.data);
+        });
+      const responseSubscription =
+        Notifications.addNotificationResponseReceivedListener((response) => {
+          console.log(
+            "[notifications] listener response",
+            response.notification.request.content.data,
+          );
           showPaymentRequest(response.notification, "response");
-        },
-      );
+        });
 
       cleanup = () => {
         receivedSubscription.remove();
@@ -522,8 +572,8 @@ export function observeBalanceUpdates(
   console.log("[notifications] observeBalanceUpdates iniciado");
   let cleanup = () => {};
   let disposed = false;
-  let lastHandledResponseKey = "";
   const observerStartedAt = Date.now();
+  const processedKeys = new Set<string>();
 
   const showBalanceUpdate = (
     notification: NotificationPayload,
@@ -532,9 +582,19 @@ export function observeBalanceUpdates(
     const data = notification.request.content.data;
     console.log("[notifications] notificación saldo recibida", data);
 
-    if (isBalanceUpdateNotification(data)) {
-      onBalanceUpdate(data, source);
+    if (!isBalanceUpdateNotification(data)) {
+      return;
     }
+
+    const key = `${data.type}:${data.transactionId}`;
+
+    if (source === "received" && processedKeys.has(key)) {
+      console.log("[notifications] balance duplicado ignorado", key);
+      return;
+    }
+
+    processedKeys.add(key);
+    onBalanceUpdate(data, source);
   };
 
   loadNotifications()
@@ -549,34 +609,18 @@ export function observeBalanceUpdates(
             return;
           }
 
-          const responseKey = getNotificationResponseKey(response.notification);
-
-          if (responseKey && responseKey === lastHandledResponseKey) {
-            return;
-          }
-
-          lastHandledResponseKey = responseKey;
           showBalanceUpdate(response.notification, "response");
         }
       });
 
-      const receivedSubscription = Notifications.addNotificationReceivedListener(
-        (notification) => {
+      const receivedSubscription =
+        Notifications.addNotificationReceivedListener((notification) => {
           showBalanceUpdate(notification, "received");
-        },
-      );
-      const responseSubscription = Notifications.addNotificationResponseReceivedListener(
-        (response) => {
-          const responseKey = getNotificationResponseKey(response.notification);
-
-          if (responseKey && responseKey === lastHandledResponseKey) {
-            return;
-          }
-
-          lastHandledResponseKey = responseKey;
+        });
+      const responseSubscription =
+        Notifications.addNotificationResponseReceivedListener((response) => {
           showBalanceUpdate(response.notification, "response");
-        },
-      );
+        });
 
       cleanup = () => {
         receivedSubscription.remove();
@@ -599,15 +643,36 @@ export function observeBalanceUpdates(
   };
 }
 
-export async function approvePaymentRequest(token: string, transactionId: string | number) {
-  return postAuthenticated<PaymentApprovalResponse>("/transactions/approve", token, {
-    transactionId,
-  });
+export async function approvePaymentRequest(
+  token: string,
+  transactionId: string | number,
+) {
+  return postAuthenticated<PaymentApprovalResponse>(
+    "/transactions/approve",
+    token,
+    {
+      transactionId,
+    },
+  );
 }
 
-export async function rejectPaymentRequest(token: string, transactionId: string | number) {
+export async function rejectPaymentRequest(
+  token: string,
+  transactionId: string | number,
+) {
   return postAuthenticated("/transactions/reject", token, {
     transactionId,
   });
 }
 
+export async function getTransactionTime(
+  token: string,
+  transactionId: string | number,
+) {
+  return getAuthenticated<{
+    status: string;
+    remaining_seconds: number;
+    expires_at: string | null;
+    created_at: string | null;
+  }>(`/transactions/${transactionId}/time`, token);
+}
