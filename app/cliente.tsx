@@ -62,6 +62,7 @@ type ActivationStep =
   | "summary";
 
 const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
+const ACTIVATION_SUBMITTED_KEY_PREFIX = "pagosfic.activationSubmitted.";
 const MAX_STORED_PAYMENT_REQUESTS = 80;
 const PAYMENT_TIMEOUT_SECONDS = 60;
 const STATUS_MESSAGE_CLEAR_DELAY_MS = 3000;
@@ -178,6 +179,9 @@ const saveHandledPaymentRequestKeys = async (keys: Set<string>) => {
   );
 };
 
+const getActivationSubmittedKey = (userId: number) =>
+  `${ACTIVATION_SUBMITTED_KEY_PREFIX}${userId}`;
+
 const isPaymentAlreadyResolvedError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "");
   const normalized = message.toLowerCase();
@@ -245,6 +249,7 @@ export default function ClienteScreen() {
   const [cameraMountReady, setCameraMountReady] = useState(false);
   const [hasSignatureStrokes, setHasSignatureStrokes] = useState(false);
   const [activationLoading, setActivationLoading] = useState(false);
+  const [activationSubmitted, setActivationSubmitted] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [activationError, setActivationError] = useState("");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -438,7 +443,7 @@ export default function ClienteScreen() {
   useEffect(() => {
     let mounted = true;
 
-    getStoredSession().then((storedSession) => {
+    getStoredSession().then(async (storedSession) => {
       if (!mounted) {
         return;
       }
@@ -455,6 +460,12 @@ export default function ClienteScreen() {
       });
 
       setSession(storedSession);
+      const storedActivationSubmitted = await SecureStore.getItemAsync(
+        getActivationSubmittedKey(storedSession.user.id_usuario),
+      );
+      if (mounted) {
+        setActivationSubmitted(storedActivationSubmitted === "1");
+      }
       setProfile({
         ...getFallbackClienteProfile(storedSession),
         monto_deposito: "",
@@ -570,7 +581,6 @@ export default function ClienteScreen() {
     setSignatureImage(null);
     setHasSignatureStrokes(false);
     setActivationError("");
-    setActivationMessage("");
     setCameraLayout({ width: 0, height: 0 });
     setCameraKey((prev) => prev + 1);
     setSignatureKey((prev) => prev + 1);
@@ -606,6 +616,14 @@ export default function ClienteScreen() {
       return;
     }
 
+    if (activationSubmitted) {
+      setActivationMessage(
+        "Documentación enviada. Tu activación QR está en revisión.",
+      );
+      setActivationError("");
+      return;
+    }
+
     setActivationMessage("");
     setActivationError("");
 
@@ -634,7 +652,7 @@ export default function ClienteScreen() {
     setSignatureKey((prev) => prev + 1);
     setActivationStep("front");
     setActivationModalVisible(true);
-  }, [cameraPermission?.granted, requestCameraPermission]);
+  }, [activationSubmitted, cameraPermission?.granted, requestCameraPermission]);
 
   const cropToCardFrame = useCallback(
     async (uri: string, photoWidth: number, photoHeight: number) => {
@@ -839,6 +857,11 @@ export default function ClienteScreen() {
           ine_trasera: ineBack,
           firma: signature,
         });
+        await SecureStore.setItemAsync(
+          getActivationSubmittedKey(activeSession.user.id_usuario),
+          "1",
+        );
+        setActivationSubmitted(true);
         setActivationMessage(
           "Documentos guardados correctamente. Tu activación QR quedó en revisión.",
         );
@@ -857,6 +880,13 @@ export default function ClienteScreen() {
   );
 
   const handleSubmitActivation = useCallback(() => {
+    if (activationSubmitted) {
+      setActivationError(
+        "La documentación ya fue enviada y está en revisión.",
+      );
+      return;
+    }
+
     if (!ineFront || !ineBack || !signatureImage) {
       setActivationError("Captura frente, reverso y firma para activar el QR.");
       return;
@@ -865,7 +895,13 @@ export default function ClienteScreen() {
     setActivationLoading(true);
     setActivationError("");
     void saveActivationWithSignature(signatureImage);
-  }, [ineBack, ineFront, signatureImage, saveActivationWithSignature]);
+  }, [
+    activationSubmitted,
+    ineBack,
+    ineFront,
+    signatureImage,
+    saveActivationWithSignature,
+  ]);
 
   const handleLogout = useCallback(async () => {
     await clearSession();
@@ -1236,7 +1272,6 @@ export default function ClienteScreen() {
 
   const qrActivo =
     Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
-  const activationSubmitted = Boolean(activationMessage);
   const refreshDisabled = manualRefreshing || profileLoading;
 
   const handleRefreshScreen = useCallback(async () => {
@@ -1720,12 +1755,12 @@ export default function ClienteScreen() {
             <Text style={styles.modalSecondaryButtonText}>Volver</Text>
           </Pressable>
           <Pressable
-            disabled={activationLoading || !signatureImage}
+            disabled={activationLoading || activationSubmitted || !signatureImage}
             onPress={handleSubmitActivation}
             style={[
               styles.modalPrimaryButton,
               styles.modalSaveButton,
-              (activationLoading || !signatureImage) &&
+              (activationLoading || activationSubmitted || !signatureImage) &&
                 styles.modalButtonDisabled,
             ]}
           >
@@ -1914,10 +1949,19 @@ export default function ClienteScreen() {
             <View style={styles.panel}>
               <View style={styles.balanceGrid}>
                 <View style={styles.balancePanel}>
-                  <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                  <View style={styles.balanceHeader}>
+                    <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                    {!qrActivo ? (
+                      <View style={styles.qrInactiveBadge}>
+                        <Text style={styles.qrInactiveBadgeText}>
+                          QR inactivo
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
                   <Text style={styles.balanceValue}>
-                    {displayedBalance === null
-                      ? "Consultando..."
+                    {!qrActivo
+                      ? "$0.00"
                       : `$${formatBalance(displayedBalance)}`}
                   </Text>
                 </View>
@@ -2325,6 +2369,27 @@ const styles = StyleSheet.create({
   balanceLabel: {
     color: "#d5a84f",
     fontSize: 12,
+    fontWeight: "900",
+    textTransform: "uppercase",
+  },
+  balanceHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    justifyContent: "space-between",
+  },
+  qrInactiveBadge: {
+    backgroundColor: "#f97316",
+    borderColor: "#fed7aa",
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  qrInactiveBadgeText: {
+    color: "#fff8e8",
+    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
