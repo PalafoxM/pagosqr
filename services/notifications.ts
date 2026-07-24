@@ -52,7 +52,10 @@ const getApiBaseUrl = () => {
 export const isPaymentRequestNotification = (
   data: unknown,
 ): data is PaymentRequestNotification => {
-  const payload = data && typeof data === "object" ? (data as PaymentRequestNotification) : {};
+  const payload =
+    data && typeof data === "object"
+      ? (data as PaymentRequestNotification)
+      : {};
 
   return payload.type === "PAYMENT_REQUEST" && Boolean(payload.transactionId);
 };
@@ -60,7 +63,8 @@ export const isPaymentRequestNotification = (
 export const isBalanceUpdateNotification = (
   data: unknown,
 ): data is BalanceUpdateNotification => {
-  const payload = data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
+  const payload =
+    data && typeof data === "object" ? (data as BalanceUpdateNotification) : {};
 
   return (
     (payload.type === "PAYMENT_COMPLETED" ||
@@ -131,14 +135,36 @@ export function observeBalanceUpdates(
   return () => {};
 }
 
-export async function approvePaymentRequest(token: string, transactionId: string | number) {
-  return postAuthenticated<PaymentApprovalResponse>("/transactions/approve", token, {
+export async function approvePaymentRequest(
+  token: string,
+  transactionId: string | number,
+) {
+  return postAuthenticated<PaymentApprovalResponse>(
+    "/transactions/approve",
+    token,
+    {
+      transactionId,
+    },
+  );
+}
+
+export async function rejectPaymentRequest(
+  token: string,
+  transactionId: string | number,
+) {
+  return postAuthenticated("/transactions/reject", token, {
     transactionId,
   });
 }
 
-export async function rejectPaymentRequest(token: string, transactionId: string | number) {
-  return postAuthenticated("/transactions/reject", token, {
-    transactionId,
+export async function getTransactionTime(
+  token: string,
+  transactionId: string | number,
+) {
+  return Promise.resolve({
+    status: "pending",
+    remaining_seconds: 60,
+    expires_at: new Date(Date.now() + 60000).toISOString(),
+    created_at: new Date().toISOString(),
   });
 }

@@ -1,11 +1,9 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import { router, Stack } from "expo-router";
-import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Dimensions,
   Image,
   Linking,
@@ -35,20 +33,21 @@ import {
 import {
   activateClienteQr,
   ClienteProfile,
+  DailyConsumptionItem,
   EstablecimientoFic,
+  getClienteDailyConsumption,
   getClienteProfile,
   getEstablecimientosFic,
   getFallbackClienteProfile,
 } from "@/services/client-data";
 import {
   approvePaymentRequest,
-  getPaymentRequestNotifications,
+  getTransactionTime,
   observeBalanceUpdates,
   observePaymentRequests,
   PaymentRequestNotification,
   registerPushToken,
   rejectPaymentRequest,
-  shouldUseInAppPaymentPolling,
 } from "@/services/notifications";
 
 type ClienteTab = "datos" | "establecimientos" | "cuenta";
@@ -61,9 +60,6 @@ type ActivationStep =
   | "signature"
   | "summary";
 
-const HANDLED_PAYMENT_REQUESTS_KEY = "pagosfic.handledPaymentRequests";
-const ACTIVATION_SUBMITTED_KEY_PREFIX = "pagosfic.activationSubmitted.";
-const MAX_STORED_PAYMENT_REQUESTS = 80;
 const PAYMENT_TIMEOUT_SECONDS = 60;
 const STATUS_MESSAGE_CLEAR_DELAY_MS = 3000;
 
@@ -156,35 +152,16 @@ const signatureCanvasWebStyle = `
   }
 `;
 
-const loadHandledPaymentRequestKeys = async () => {
-  try {
-    const storedKeys = await SecureStore.getItemAsync(
-      HANDLED_PAYMENT_REQUESTS_KEY,
-    );
-    const parsedKeys = storedKeys ? JSON.parse(storedKeys) : [];
-
-    return Array.isArray(parsedKeys)
-      ? parsedKeys.filter((key): key is string => typeof key === "string")
-      : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveHandledPaymentRequestKeys = async (keys: Set<string>) => {
-  const nextKeys = Array.from(keys).slice(-MAX_STORED_PAYMENT_REQUESTS);
-  await SecureStore.setItemAsync(
-    HANDLED_PAYMENT_REQUESTS_KEY,
-    JSON.stringify(nextKeys),
-  );
-};
-
-const getActivationSubmittedKey = (userId: number) =>
-  `${ACTIVATION_SUBMITTED_KEY_PREFIX}${userId}`;
-
 const isPaymentAlreadyResolvedError = (error: unknown) => {
   const message = error instanceof Error ? error.message : String(error || "");
   const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("la solicitud ha expirado") ||
+    normalized.includes("tiempo de espera agotado")
+  ) {
+    return false;
+  }
 
   return (
     normalized.includes("solicitud no encontrada") ||
@@ -236,8 +213,6 @@ export default function ClienteScreen() {
   const [paymentTimeoutSeconds, setPaymentTimeoutSeconds] = useState(
     PAYMENT_TIMEOUT_SECONDS,
   );
-  const [handledPaymentRequestsLoaded, setHandledPaymentRequestsLoaded] =
-    useState(false);
   const [activationStep, setActivationStep] = useState<ActivationStep>("idle");
   const [ineFront, setIneFront] = useState<string | null>(null);
   const [ineBack, setIneBack] = useState<string | null>(null);
@@ -249,7 +224,6 @@ export default function ClienteScreen() {
   const [cameraMountReady, setCameraMountReady] = useState(false);
   const [hasSignatureStrokes, setHasSignatureStrokes] = useState(false);
   const [activationLoading, setActivationLoading] = useState(false);
-  const [activationSubmitted, setActivationSubmitted] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [activationError, setActivationError] = useState("");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -259,6 +233,13 @@ export default function ClienteScreen() {
   const [backPhotoUri, setBackPhotoUri] = useState<string | null>(null);
   const [cameraKey, setCameraKey] = useState(0);
   const [signatureKey, setSignatureKey] = useState(0);
+  const [dailyConsumption, setDailyConsumption] = useState<
+    DailyConsumptionItem[]
+  >([]);
+  const [dailyConsumptionLoading, setDailyConsumptionLoading] = useState(false);
+  const [dailyConsumptionError, setDailyConsumptionError] = useState("");
+  const [dailyConsumptionRefreshTrigger, setDailyConsumptionRefreshTrigger] =
+    useState(0);
   const cameraRef = useRef<any>(null);
   const signatureRef = useRef<SignatureViewRef | null>(null);
   const cameraMountTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -267,9 +248,7 @@ export default function ClienteScreen() {
   const sessionRef = useRef<AuthSession | null>(null);
   const profileRef = useRef<ClienteProfile | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
-  const promptedPaymentRef = useRef<string | number | null>(null);
   const paymentTimeoutRef = useRef<number | null>(null);
-  const handledPaymentRequestsRef = useRef(new Set<string>());
   const profileRequestIdRef = useRef(0);
   const profileRefreshInFlightRef = useRef(false);
   const registeredPushTokenForSessionRef = useRef("");
@@ -278,6 +257,8 @@ export default function ClienteScreen() {
   const statusMessageTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const isProcessingPaymentRef = useRef(false);
+  const processedPaymentIdsRef = useRef<Set<string>>(new Set());
 
   const clearPaymentMessage = useCallback(() => {
     if (statusMessageTimeoutRef.current) {
@@ -286,35 +267,6 @@ export default function ClienteScreen() {
     }
     setPaymentActionMessage("");
   }, []);
-
-  useEffect(() => {
-    let mounted = true;
-
-    loadHandledPaymentRequestKeys().then((keys) => {
-      if (mounted) {
-        handledPaymentRequestsRef.current = new Set(keys);
-        setHandledPaymentRequestsLoaded(true);
-      }
-    });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const persistHandledPaymentRequest = useCallback(
-    (transactionId: string | number | undefined) => {
-      const key = String(transactionId || "");
-
-      if (!key) {
-        return;
-      }
-
-      handledPaymentRequestsRef.current.add(key);
-      void saveHandledPaymentRequestKeys(handledPaymentRequestsRef.current);
-    },
-    [],
-  );
 
   useEffect(() => {
     sessionRef.current = session;
@@ -365,47 +317,106 @@ export default function ClienteScreen() {
       return;
     }
 
-    setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
-    if (paymentTimeoutRef.current) {
-      clearInterval(paymentTimeoutRef.current);
-      paymentTimeoutRef.current = null;
+    if (paymentActionLoading !== null) {
+      return;
     }
 
-    paymentTimeoutRef.current = setInterval(() => {
-      setPaymentTimeoutSeconds((prev) => {
-        const next = prev - 1;
-        if (next <= 0) {
+    let mounted = true;
+
+    const syncBackendTime = async () => {
+      if (!sessionRef.current || !paymentRequest.transactionId) return;
+      try {
+        const timeData = await getTransactionTime(
+          sessionRef.current.token,
+          paymentRequest.transactionId,
+        );
+        if (!mounted) return;
+
+        setPaymentTimeoutSeconds(timeData.remaining_seconds);
+
+        if (timeData.remaining_seconds <= 0 || timeData.status !== "pending") {
           if (paymentTimeoutRef.current) {
             clearInterval(paymentTimeoutRef.current);
             paymentTimeoutRef.current = null;
           }
+
           setPaymentRequest(null);
-          setPaymentActionMessage(
-            "Tiempo de espera agotado. El pago ha sido rechazado.",
-          );
-          if (statusMessageTimeoutRef.current) {
-            clearTimeout(statusMessageTimeoutRef.current);
+          isProcessingPaymentRef.current = false;
+
+          if (
+            timeData.status === "rejected" ||
+            timeData.status === "rechazado" ||
+            timeData.remaining_seconds <= 0
+          ) {
+            setPaymentActionMessage(
+              "Tiempo de espera agotado. El pago ha sido rechazado.",
+            );
+          } else {
+            setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
           }
+
+          if (statusMessageTimeoutRef.current)
+            clearTimeout(statusMessageTimeoutRef.current);
           statusMessageTimeoutRef.current = setTimeout(() => {
             setPaymentActionMessage("");
           }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
-          if (paymentRequest?.transactionId) {
-            persistHandledPaymentRequest(paymentRequest.transactionId);
-          }
-          return 0;
         }
-        return next;
-      });
-    }, 1000) as unknown as number;
+      } catch (error) {
+        console.warn("Error sincronizando temporizador con backend", error);
+      }
+    };
+
+    syncBackendTime();
+    paymentTimeoutRef.current = setInterval(
+      syncBackendTime,
+      1000,
+    ) as unknown as number;
 
     return () => {
+      mounted = false;
       if (paymentTimeoutRef.current) {
         clearInterval(paymentTimeoutRef.current);
         paymentTimeoutRef.current = null;
       }
       setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
     };
-  }, [paymentRequest, persistHandledPaymentRequest]);
+  }, [paymentRequest, paymentActionLoading]);
+
+  useEffect(() => {
+    if (!sessionToken) {
+      return;
+    }
+
+    let mounted = true;
+    setDailyConsumptionLoading(true);
+    setDailyConsumptionError("");
+
+    getClienteDailyConsumption(sessionToken)
+      .then((items) => {
+        if (mounted) {
+          setDailyConsumption(items);
+        }
+      })
+      .catch((error) => {
+        if (mounted) {
+          setDailyConsumption([]);
+          setDailyConsumptionError(
+            error instanceof Error
+              ? error.message
+              : "No se pudo consultar el consumo diario.",
+          );
+        }
+      })
+      .finally(() => {
+        if (mounted) {
+          setDailyConsumptionLoading(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [sessionToken, dailyConsumptionRefreshTrigger]);
 
   useEffect(() => {
     const isCameraStep =
@@ -443,7 +454,7 @@ export default function ClienteScreen() {
   useEffect(() => {
     let mounted = true;
 
-    getStoredSession().then(async (storedSession) => {
+    getStoredSession().then((storedSession) => {
       if (!mounted) {
         return;
       }
@@ -460,12 +471,6 @@ export default function ClienteScreen() {
       });
 
       setSession(storedSession);
-      const storedActivationSubmitted = await SecureStore.getItemAsync(
-        getActivationSubmittedKey(storedSession.user.id_usuario),
-      );
-      if (mounted) {
-        setActivationSubmitted(storedActivationSubmitted === "1");
-      }
       setProfile({
         ...getFallbackClienteProfile(storedSession),
         monto_deposito: "",
@@ -581,6 +586,7 @@ export default function ClienteScreen() {
     setSignatureImage(null);
     setHasSignatureStrokes(false);
     setActivationError("");
+    setActivationMessage("");
     setCameraLayout({ width: 0, height: 0 });
     setCameraKey((prev) => prev + 1);
     setSignatureKey((prev) => prev + 1);
@@ -616,14 +622,6 @@ export default function ClienteScreen() {
       return;
     }
 
-    if (activationSubmitted) {
-      setActivationMessage(
-        "Documentación enviada. Tu activación QR está en revisión.",
-      );
-      setActivationError("");
-      return;
-    }
-
     setActivationMessage("");
     setActivationError("");
 
@@ -652,7 +650,7 @@ export default function ClienteScreen() {
     setSignatureKey((prev) => prev + 1);
     setActivationStep("front");
     setActivationModalVisible(true);
-  }, [activationSubmitted, cameraPermission?.granted, requestCameraPermission]);
+  }, [cameraPermission?.granted, requestCameraPermission]);
 
   const cropToCardFrame = useCallback(
     async (uri: string, photoWidth: number, photoHeight: number) => {
@@ -857,11 +855,6 @@ export default function ClienteScreen() {
           ine_trasera: ineBack,
           firma: signature,
         });
-        await SecureStore.setItemAsync(
-          getActivationSubmittedKey(activeSession.user.id_usuario),
-          "1",
-        );
-        setActivationSubmitted(true);
         setActivationMessage(
           "Documentos guardados correctamente. Tu activación QR quedó en revisión.",
         );
@@ -880,13 +873,6 @@ export default function ClienteScreen() {
   );
 
   const handleSubmitActivation = useCallback(() => {
-    if (activationSubmitted) {
-      setActivationError(
-        "La documentación ya fue enviada y está en revisión.",
-      );
-      return;
-    }
-
     if (!ineFront || !ineBack || !signatureImage) {
       setActivationError("Captura frente, reverso y firma para activar el QR.");
       return;
@@ -895,13 +881,7 @@ export default function ClienteScreen() {
     setActivationLoading(true);
     setActivationError("");
     void saveActivationWithSignature(signatureImage);
-  }, [
-    activationSubmitted,
-    ineBack,
-    ineFront,
-    signatureImage,
-    saveActivationWithSignature,
-  ]);
+  }, [ineBack, ineFront, signatureImage, saveActivationWithSignature]);
 
   const handleLogout = useCallback(async () => {
     await clearSession();
@@ -947,6 +927,7 @@ export default function ClienteScreen() {
         setSession(nextSession);
         sessionRef.current = nextSession;
         await saveSession(nextSession);
+        setDailyConsumptionRefreshTrigger((prev) => prev + 1);
       } finally {
         profileRefreshInFlightRef.current = false;
       }
@@ -1016,8 +997,15 @@ export default function ClienteScreen() {
       setSession(nextSession);
       sessionRef.current = nextSession;
       await saveSession(nextSession);
+
+      if (
+        reason !== "hotel_check_in" &&
+        balanceUpdate.current_balance !== undefined
+      ) {
+        setDailyConsumptionRefreshTrigger((prev) => prev + 1);
+      }
     },
-    [],
+    [setDailyConsumptionRefreshTrigger],
   );
 
   const handlePaymentAction = useCallback(
@@ -1026,10 +1014,15 @@ export default function ClienteScreen() {
       request: PaymentRequestNotification | null = paymentRequestRef.current,
     ) => {
       const activeSession = sessionRef.current;
+      if (!activeSession || !request?.transactionId) return;
 
-      if (!activeSession || !request?.transactionId) {
-        return;
+      if (paymentTimeoutRef.current) {
+        clearInterval(paymentTimeoutRef.current);
+        paymentTimeoutRef.current = null;
       }
+
+      const transactionKey = String(request.transactionId);
+      processedPaymentIdsRef.current.add(transactionKey);
 
       setPaymentActionLoading(action);
       setPaymentActionMessage("");
@@ -1044,25 +1037,30 @@ export default function ClienteScreen() {
             activeSession.token,
             request.transactionId,
           );
-          logClienteSaldo("pago aprobado, consultando saldo real", {
-            transactionId: request.transactionId,
-          });
-          await refreshClienteProfile(sessionRef.current || activeSession);
 
-          persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago aprobado correctamente.");
+
           if (statusMessageTimeoutRef.current) {
             clearTimeout(statusMessageTimeoutRef.current);
           }
           statusMessageTimeoutRef.current = setTimeout(() => {
             setPaymentActionMessage("");
           }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
+
+          logClienteSaldo("pago aprobado, consultando saldo real", {
+            transactionId: request.transactionId,
+          });
+
+          setPaymentRequest(null);
+          isProcessingPaymentRef.current = false;
+
+          await refreshClienteProfile(sessionRef.current || activeSession);
+          setDailyConsumptionRefreshTrigger((prev) => prev + 1);
         } else {
           await rejectPaymentRequest(
             activeSession.token,
             request.transactionId,
           );
-          persistHandledPaymentRequest(request.transactionId);
           setPaymentActionMessage("Pago rechazado correctamente.");
           if (statusMessageTimeoutRef.current) {
             clearTimeout(statusMessageTimeoutRef.current);
@@ -1073,11 +1071,35 @@ export default function ClienteScreen() {
         }
 
         setPaymentRequest(null);
+        isProcessingPaymentRef.current = false;
       } catch (paymentError) {
-        if (isPaymentAlreadyResolvedError(paymentError)) {
-          persistHandledPaymentRequest(request.transactionId);
+        const errorMessage =
+          paymentError instanceof Error
+            ? paymentError.message
+            : String(paymentError);
+        const lowerMsg = errorMessage.toLowerCase();
+
+        if (
+          lowerMsg.includes("la solicitud ha expirado") ||
+          lowerMsg.includes("tiempo de espera agotado")
+        ) {
+          setPaymentActionMessage(
+            "Tiempo de espera agotado. El pago ha sido rechazado.",
+          );
+          if (statusMessageTimeoutRef.current)
+            clearTimeout(statusMessageTimeoutRef.current);
+          statusMessageTimeoutRef.current = setTimeout(
+            () => setPaymentActionMessage(""),
+            STATUS_MESSAGE_CLEAR_DELAY_MS,
+          ) as unknown as number;
           setPaymentRequest(null);
-          promptedPaymentRef.current = null;
+          isProcessingPaymentRef.current = false;
+          return;
+        }
+
+        if (isPaymentAlreadyResolvedError(paymentError)) {
+          setPaymentRequest(null);
+          isProcessingPaymentRef.current = false;
           setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
           if (statusMessageTimeoutRef.current) {
             clearTimeout(statusMessageTimeoutRef.current);
@@ -1104,137 +1126,79 @@ export default function ClienteScreen() {
         setPaymentActionLoading(null);
       }
     },
-    [persistHandledPaymentRequest, refreshClienteProfile],
-  );
-
-  const showPaymentRequestPrompt = useCallback(
-    (nextPaymentRequest: PaymentRequestNotification) => {
-      const transactionId = nextPaymentRequest.transactionId;
-      const transactionKey = String(transactionId || "");
-
-      if (
-        !transactionId ||
-        promptedPaymentRef.current === transactionId ||
-        handledPaymentRequestsRef.current.has(transactionKey)
-      ) {
-        return;
-      }
-
-      promptedPaymentRef.current = transactionId;
-      persistHandledPaymentRequest(transactionKey);
-
-      const providerName = nextPaymentRequest.vendorName || "Proveedor FIC";
-      const total = formatPaymentTotal(nextPaymentRequest.total);
-      const description = nextPaymentRequest.description
-        ? `\n\n${nextPaymentRequest.description}`
-        : "";
-
-      Alert.alert(
-        "Solicitud de pago",
-        `${providerName}\nTotal: ${total}${description}`,
-        [
-          {
-            text: "Rechazar",
-            style: "destructive",
-            onPress: () => {
-              promptedPaymentRef.current = null;
-              handlePaymentAction("reject", nextPaymentRequest);
-            },
-          },
-          {
-            text: "Aprobar",
-            onPress: () => {
-              promptedPaymentRef.current = null;
-              handlePaymentAction("approve", nextPaymentRequest);
-            },
-          },
-        ],
-      );
-    },
-    [handlePaymentAction, persistHandledPaymentRequest],
+    [refreshClienteProfile, setDailyConsumptionRefreshTrigger],
   );
 
   useEffect(() => {
-    if (!handledPaymentRequestsLoaded) {
-      return;
-    }
-
-    return observePaymentRequests((nextPaymentRequest, source) => {
+    const unsubscribe = observePaymentRequests((nextPaymentRequest, source) => {
       const transactionKey = String(nextPaymentRequest.transactionId || "");
 
-      if (
-        !transactionKey ||
-        handledPaymentRequestsRef.current.has(transactionKey)
-      ) {
+      if (!transactionKey) return;
+      if (processedPaymentIdsRef.current.has(transactionKey)) {
+        console.log("[cliente] pago ya procesado, ignorando", transactionKey);
+
         setPaymentRequest(null);
-        promptedPaymentRef.current = null;
         setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+
         if (statusMessageTimeoutRef.current) {
           clearTimeout(statusMessageTimeoutRef.current);
         }
-        statusMessageTimeoutRef.current = setTimeout(() => {
-          setPaymentActionMessage("");
-        }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
+        statusMessageTimeoutRef.current = setTimeout(
+          () => setPaymentActionMessage(""),
+          3000,
+        ) as unknown as number;
+
+        return;
+      }
+      if (isProcessingPaymentRef.current) {
+        console.log(
+          "[cliente] ya procesando un pago, ignorando",
+          transactionKey,
+        );
         return;
       }
 
-      setPaymentRequest(nextPaymentRequest);
-      setPaymentActionMessage("");
-      setActiveTab("datos");
+      const currentSession = sessionRef.current;
+      if (!currentSession) return;
 
-      if (source === "response") {
-        showPaymentRequestPrompt(nextPaymentRequest);
-      }
+      getTransactionTime(currentSession.token, transactionKey)
+        .then((timeData) => {
+          if (timeData.status === "pending") {
+            isProcessingPaymentRef.current = true;
+            setPaymentRequest(nextPaymentRequest);
+            setPaymentActionMessage("");
+            setActiveTab("datos");
+          } else {
+            setPaymentRequest(null);
+            setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
+            if (statusMessageTimeoutRef.current)
+              clearTimeout(statusMessageTimeoutRef.current);
+            statusMessageTimeoutRef.current = setTimeout(
+              () => setPaymentActionMessage(""),
+              3000,
+            ) as unknown as number;
+          }
+        })
+        .catch((error) => {
+          console.warn(
+            "[cliente] error al consultar estado de transacción",
+            error,
+          );
+          isProcessingPaymentRef.current = true;
+          setPaymentRequest(nextPaymentRequest);
+          setPaymentActionMessage("");
+          setActiveTab("datos");
+        });
     });
-  }, [handledPaymentRequestsLoaded, showPaymentRequestPrompt]);
+
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     return observeBalanceUpdates((balanceUpdate, source) => {
       void applyBalanceUpdate(balanceUpdate, source);
     });
   }, [applyBalanceUpdate]);
-
-  useEffect(() => {
-    if (
-      !session ||
-      !handledPaymentRequestsLoaded ||
-      !shouldUseInAppPaymentPolling()
-    ) {
-      return;
-    }
-
-    let mounted = true;
-
-    const pollPaymentRequests = async () => {
-      try {
-        const requests = await getPaymentRequestNotifications(session.token);
-        const nextPaymentRequest = requests.find((request) => {
-          const key = String(request.transactionId || "");
-          return key && !handledPaymentRequestsRef.current.has(key);
-        });
-
-        if (mounted && nextPaymentRequest) {
-          setPaymentRequest(nextPaymentRequest);
-          setPaymentActionMessage("");
-          setActiveTab("datos");
-          showPaymentRequestPrompt(nextPaymentRequest);
-        }
-      } catch (pollError) {
-        console.warn(
-          "No se pudieron consultar solicitudes de pago.",
-          pollError,
-        );
-      }
-    };
-
-    pollPaymentRequests();
-    const intervalId = setInterval(pollPaymentRequests, 5000);
-
-    return () => {
-      mounted = false;
-      clearInterval(intervalId);
-    };
-  }, [handledPaymentRequestsLoaded, session, showPaymentRequestPrompt]);
 
   const qrPayload = useMemo(() => {
     if (!session) {
@@ -1272,6 +1236,7 @@ export default function ClienteScreen() {
 
   const qrActivo =
     Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
+  const activationSubmitted = Boolean(activationMessage);
   const refreshDisabled = manualRefreshing || profileLoading;
 
   const handleRefreshScreen = useCallback(async () => {
@@ -1755,12 +1720,12 @@ export default function ClienteScreen() {
             <Text style={styles.modalSecondaryButtonText}>Volver</Text>
           </Pressable>
           <Pressable
-            disabled={activationLoading || activationSubmitted || !signatureImage}
+            disabled={activationLoading || !signatureImage}
             onPress={handleSubmitActivation}
             style={[
               styles.modalPrimaryButton,
               styles.modalSaveButton,
-              (activationLoading || activationSubmitted || !signatureImage) &&
+              (activationLoading || !signatureImage) &&
                 styles.modalButtonDisabled,
             ]}
           >
@@ -1928,7 +1893,7 @@ export default function ClienteScreen() {
                   )}
                 </Pressable>
               </View>
-              {paymentRequest && !paymentRequest.status ? (
+              {paymentRequest && paymentRequest.status === "pending" ? (
                 <View style={styles.timeoutContainer}>
                   <Text style={styles.timeoutLabel}>
                     Tiempo restante para aprobar
@@ -1949,26 +1914,11 @@ export default function ClienteScreen() {
             <View style={styles.panel}>
               <View style={styles.balanceGrid}>
                 <View style={styles.balancePanel}>
-                  <View style={styles.balanceHeader}>
-                    <Text style={styles.balanceLabel}>Saldo disponible</Text>
-                    {!qrActivo ? (
-                      <View style={styles.qrInactiveBadge}>
-                        <Text style={styles.qrInactiveBadgeText}>
-                          QR inactivo
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
+                  <Text style={styles.balanceLabel}>Saldo disponible</Text>
                   <Text style={styles.balanceValue}>
-                    {!qrActivo
-                      ? "$0.00"
+                    {displayedBalance === null
+                      ? "Consultando..."
                       : `$${formatBalance(displayedBalance)}`}
-                  </Text>
-                </View>
-                <View style={[styles.balancePanel, styles.consumoPanel]}>
-                  <Text style={styles.consumoLabel}>Consumo diario</Text>
-                  <Text style={styles.consumoValue}>
-                    {displayedBalance === null ? "Consultando..." : "$0.00"}
                   </Text>
                 </View>
               </View>
@@ -1996,6 +1946,30 @@ export default function ClienteScreen() {
                 label="ID usuario"
                 value={"FIC-" + String(session?.user.id_usuario || "") + "-QR"}
               />
+
+              <View style={styles.consumoSection}>
+                <Text style={styles.consumoSectionTitle}>Consumo diario</Text>
+                {dailyConsumptionLoading ? (
+                  <ActivityIndicator color="#0f766e" size="small" />
+                ) : dailyConsumptionError ? (
+                  <Text style={styles.warning}>{dailyConsumptionError}</Text>
+                ) : dailyConsumption.length === 0 ? (
+                  <Text style={styles.emptyText}>
+                    Sin consumo registrado hoy.
+                  </Text>
+                ) : (
+                  dailyConsumption.map((item, index) => (
+                    <View key={`consumo-${index}`} style={styles.consumoItem}>
+                      <Text style={styles.consumoItemName}>
+                        {item.establecimiento}
+                      </Text>
+                      <Text style={styles.consumoItemTotal}>
+                        ${item.total_gastado.toFixed(2)}
+                      </Text>
+                    </View>
+                  ))
+                )}
+              </View>
 
               {profileLoading ? <ActivityIndicator color="#0f766e" /> : null}
               {profileError ? (
@@ -2369,27 +2343,6 @@ const styles = StyleSheet.create({
   balanceLabel: {
     color: "#d5a84f",
     fontSize: 12,
-    fontWeight: "900",
-    textTransform: "uppercase",
-  },
-  balanceHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    justifyContent: "space-between",
-  },
-  qrInactiveBadge: {
-    backgroundColor: "#f97316",
-    borderColor: "#fed7aa",
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
-  qrInactiveBadgeText: {
-    color: "#fff8e8",
-    fontSize: 11,
     fontWeight: "900",
     textTransform: "uppercase",
   },
@@ -2843,20 +2796,37 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "900",
   },
-  consumoPanel: {
-    backgroundColor: "#1a1a2e",
+  consumoSection: {
+    backgroundColor: "#f9efd9",
     borderColor: "#d5a84f",
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 14,
+    gap: 8,
   },
-  consumoValue: {
-    color: "#4fc3f7",
-    fontSize: 38,
-    fontWeight: "900",
-    lineHeight: 44,
-  },
-  consumoLabel: {
-    color: "#d5a84f",
-    fontSize: 12,
+  consumoSectionTitle: {
+    color: "#CD1125",
+    fontSize: 14,
     fontWeight: "900",
     textTransform: "uppercase",
+  },
+  consumoItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "#e7d7b5",
+  },
+  consumoItemName: {
+    color: "#24160f",
+    fontSize: 15,
+    fontWeight: "600",
+    flex: 1,
+  },
+  consumoItemTotal: {
+    color: "#CD1125",
+    fontSize: 16,
+    fontWeight: "900",
   },
 });

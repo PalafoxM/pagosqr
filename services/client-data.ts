@@ -39,6 +39,11 @@ export type ActivateQrPayload = {
   firma: string;
 };
 
+export type DailyConsumptionItem = {
+  establecimiento: string;
+  total_gastado: number;
+};
+
 const getApiBaseUrl = () => {
   if (!API_BASE_URL) {
     throw new Error("No esta configurado EXPO_PUBLIC_API_BASE_URL.");
@@ -68,9 +73,13 @@ const decodeDisplayText = (value: unknown) => {
   };
 
   return getString(value)
-    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\u([0-9a-fA-F]{4})/g, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    )
     .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) =>
+      String.fromCharCode(parseInt(hex, 16)),
+    )
     .replace(/&([a-zA-Z]+);/g, (match, entity) => entities[entity] || match)
     .replace(/https?:\/\/\S+|www\.\S+/gi, "")
     .replace(/\s+/g, " ")
@@ -83,7 +92,9 @@ const getNumber = (value: unknown) => {
 };
 
 const getFlag = (value: unknown, fallback: number) =>
-  value === null || value === undefined || value === "" ? fallback : getNumber(value);
+  value === null || value === undefined || value === ""
+    ? fallback
+    : getNumber(value);
 
 const logSaldo = (message: string, details?: Record<string, unknown>) => {
   console.log(`[cliente:saldo] ${message}`, details || {});
@@ -130,7 +141,11 @@ async function fetchRows(
 
   if (!response.ok) {
     const message = await readApiError(response, `HTTP ${response.status}`);
-    logSaldo("getTabla error http", { table, status: response.status, message });
+    logSaldo("getTabla error http", {
+      table,
+      status: response.status,
+      message,
+    });
     throw new Error(message);
   }
 
@@ -142,7 +157,9 @@ async function fetchRows(
     throw new Error(message);
   }
 
-  const rows = (Array.isArray(result.data) ? result.data : []).map(normalizeRow);
+  const rows = (Array.isArray(result.data) ? result.data : []).map(
+    normalizeRow,
+  );
   logSaldo("getTabla ok", {
     table,
     rows: rows.length,
@@ -179,7 +196,9 @@ async function fetchAuthenticated<T>(path: string, token: string): Promise<T> {
     throw new Error(message);
   }
 
-  const data = (Array.isArray(result.data) ? result.data?.[0] : result.data) as T;
+  const data = (
+    Array.isArray(result.data) ? result.data?.[0] : result.data
+  ) as T;
   const row = normalizeRow(data);
   logSaldo("GET ok", {
     path,
@@ -216,7 +235,9 @@ export async function getClienteProfile(
   });
 
   try {
-    row = normalizeRow(await fetchAuthenticated<unknown>("/cliente/profile", session.token));
+    row = normalizeRow(
+      await fetchAuthenticated<unknown>("/cliente/profile", session.token),
+    );
 
     const responseUserId = getNumber(row.id_usuario);
     if (responseUserId !== session.user.id_usuario) {
@@ -249,7 +270,10 @@ export async function getClienteProfile(
     );
     const profileRows = await fetchRows(
       "vw_usuario",
-      { id_usuario: session.user.id_usuario, id_perfil: session.user.id_perfil },
+      {
+        id_usuario: session.user.id_usuario,
+        id_perfil: session.user.id_perfil,
+      },
       session.token,
     );
 
@@ -266,8 +290,14 @@ export async function getClienteProfile(
     });
   }
 
-  const tieneAlimentos = getFlag(row.tiene_alimentos, getFlag(session.user.tiene_alimentos, 1));
-  const tieneHospedaje = getFlag(row.tiene_hospedaje, getFlag(session.user.tiene_hospedaje, 0));
+  const tieneAlimentos = getFlag(
+    row.tiene_alimentos,
+    getFlag(session.user.tiene_alimentos, 1),
+  );
+  const tieneHospedaje = getFlag(
+    row.tiene_hospedaje,
+    getFlag(session.user.tiene_hospedaje, 0),
+  );
   const activoQr = getFlag(row.activo_qr, getFlag(session.user.activo_qr, 0));
   const profile = {
     nombre_completo:
@@ -356,3 +386,41 @@ export async function activateClienteQr(
   return result.data;
 }
 
+export async function getClienteDailyConsumption(
+  token: string,
+): Promise<DailyConsumptionItem[]> {
+  logSaldo("daily-consumption inicio");
+
+  const response = await fetch(`${getApiBaseUrl()}/cliente/daily-consumption`, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+      "X-API-Token": token,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await readApiError(response, `HTTP ${response.status}`);
+    logSaldo("daily-consumption error http", {
+      status: response.status,
+      message,
+    });
+    throw new Error(message);
+  }
+
+  const result = (await response.json()) as ApiListResponse;
+
+  if (result.error) {
+    const message = result.respuesta || "La API devolvió un error.";
+    logSaldo("daily-consumption error api", { message });
+    throw new Error(message);
+  }
+
+  const data = (
+    Array.isArray(result.data) ? result.data : []
+  ) as DailyConsumptionItem[];
+  logSaldo("daily-consumption ok", { items: data.length });
+
+  return data;
+}
