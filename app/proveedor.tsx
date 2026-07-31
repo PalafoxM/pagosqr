@@ -20,23 +20,16 @@ import {
   isHotelProfile,
   isProviderProfile,
 } from "@/services/auth";
-import {
-  getTransactionTime,
-  registerPushToken,
-} from "@/services/notifications";
+import { registerPushToken } from "@/services/notifications";
 import {
   ChargeResult,
   createProviderCharge,
   getProviderChargeStatus,
-  getProviderEstablecimientos,
-  getProviderTodayCharges,
   PaymentMethod,
-  ProviderEstablecimiento,
-  ProviderTodayCharge,
 } from "@/services/provider-data";
 
 const TIP_PERCENTAGES = [0, 5, 10, 15];
-const PAYMENT_TIMEOUT_SECONDS = 60;
+const PAYMENT_STATUS_POLL_MS = 2000;
 const AUTO_CLEAR_DELAY_MS = 3000;
 const STATUS_CLEAR_DELAY_MS = 3000;
 
@@ -95,14 +88,6 @@ const parseClientQrPayload = (value: string) => {
 export default function ProveedorScreen() {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
-  const [establecimientos, setEstablecimientos] = useState<
-    ProviderEstablecimiento[]
-  >([]);
-  const [selectedEstablecimientoId, setSelectedEstablecimientoId] = useState(0);
-  const [establecimientosLoading, setEstablecimientosLoading] = useState(false);
-  const [todayCharges, setTodayCharges] = useState<ProviderTodayCharge[]>([]);
-  const [todayChargesLoading, setTodayChargesLoading] = useState(false);
-  const [todayChargesError, setTodayChargesError] = useState("");
   const [qrCode, setQrCode] = useState("");
   const [amount, setAmount] = useState("");
   const [tipPercentage, setTipPercentage] = useState(0);
@@ -114,11 +99,8 @@ export default function ProveedorScreen() {
   const [result, setResult] = useState<ChargeResult | null>(null);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
-  const [remainingSeconds, setRemainingSeconds] = useState(
-    PAYMENT_TIMEOUT_SECONDS,
-  );
   const [showSuccessMessage, setShowSuccessMessage] = useState(false);
-  const timeoutIntervalRef = useRef<number | null>(null);
+  const statusPollIntervalRef = useRef<number | null>(null);
   const clearTimeoutRef = useRef<number | null>(null);
   const clearFormTimeoutRef = useRef<number | null>(null);
   const statusMessageTimeoutRef = useRef<number | null>(null);
@@ -134,11 +116,10 @@ export default function ProveedorScreen() {
     setError("");
     setResult(null);
     setScannerOpen(false);
-    setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
     setShowSuccessMessage(false);
-    if (timeoutIntervalRef.current) {
-      clearInterval(timeoutIntervalRef.current);
-      timeoutIntervalRef.current = null;
+    if (statusPollIntervalRef.current) {
+      clearInterval(statusPollIntervalRef.current);
+      statusPollIntervalRef.current = null;
     }
     if (clearTimeoutRef.current) {
       clearTimeout(clearTimeoutRef.current);
@@ -147,6 +128,10 @@ export default function ProveedorScreen() {
     if (statusMessageTimeoutRef.current) {
       clearTimeout(statusMessageTimeoutRef.current);
       statusMessageTimeoutRef.current = null;
+    }
+    if (clearFormTimeoutRef.current) {
+      clearTimeout(clearFormTimeoutRef.current);
+      clearFormTimeoutRef.current = null;
     }
   }, []);
 
@@ -162,8 +147,8 @@ export default function ProveedorScreen() {
   }, [clearForm]);
 
   const handleResetCharge = useCallback(() => {
-    scheduleClearForm();
-  }, [scheduleClearForm]);
+    clearForm();
+  }, [clearForm]);
 
   const clearStatusMessage = useCallback(() => {
     if (statusMessageTimeoutRef.current) {
@@ -205,7 +190,6 @@ export default function ProveedorScreen() {
       }
 
       setSession(storedSession);
-      setSelectedEstablecimientoId(storedSession.user.id_establecimiento || 0);
       setCheckingSession(false);
     });
 
@@ -227,90 +211,11 @@ export default function ProveedorScreen() {
   }, [session]);
 
   useEffect(() => {
-    if (!session) {
-      return;
-    }
-
-    let mounted = true;
-    const providerRef = session.user.no_proveedor || session.user.id_usuario;
-
-    setEstablecimientosLoading(true);
-    getProviderEstablecimientos(session.token, providerRef)
-      .then((items) => {
-        if (!mounted) {
-          return;
-        }
-
-        setEstablecimientos(items);
-
-        if (!selectedEstablecimientoId && items[0]?.id_establecimiento) {
-          setSelectedEstablecimientoId(Number(items[0].id_establecimiento));
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setEstablecimientos([]);
-        }
-      })
-      .finally(() => {
-        if (mounted) {
-          setEstablecimientosLoading(false);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [selectedEstablecimientoId, session]);
-
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
-
-    let mounted = true;
-    const providerRef = session.user.no_proveedor || session.user.id_usuario;
-
-    setTodayChargesLoading(true);
-    setTodayChargesError("");
-    getProviderTodayCharges(
-      session.token,
-      providerRef,
-      selectedEstablecimientoId || undefined,
-    )
-      .then((items) => {
-        if (mounted) {
-          setTodayCharges(items);
-        }
-      })
-      .catch((chargesError) => {
-        if (mounted) {
-          setTodayCharges([]);
-          setTodayChargesError(
-            chargesError instanceof Error
-              ? chargesError.message
-              : "No se pudieron consultar los consumos de hoy.",
-          );
-        }
-      })
-      .finally(() => {
-        if (mounted) {
-          setTodayChargesLoading(false);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [selectedEstablecimientoId, session]);
-
-  useEffect(() => {
     if (!result || result.status !== "pending") {
-      if (timeoutIntervalRef.current) {
-        clearInterval(timeoutIntervalRef.current);
-        timeoutIntervalRef.current = null;
+      if (statusPollIntervalRef.current) {
+        clearInterval(statusPollIntervalRef.current);
+        statusPollIntervalRef.current = null;
       }
-      setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
       return;
     }
 
@@ -318,90 +223,67 @@ export default function ProveedorScreen() {
     const transactionId = result.id || result.transaction_id;
     if (!transactionId) return;
 
-    const syncBackendTimer = async () => {
+    const syncPaymentStatus = async () => {
       if (!session) return;
       try {
-        const timeData = await getTransactionTime(session.token, transactionId);
+        const finalStatus = await getProviderChargeStatus(
+          session.token,
+          transactionId,
+        );
         if (!mounted) return;
 
-        setRemainingSeconds(timeData.remaining_seconds);
-
-        if (timeData.status !== "pending" || timeData.remaining_seconds <= 0) {
-          if (timeoutIntervalRef.current) {
-            clearInterval(timeoutIntervalRef.current);
-            timeoutIntervalRef.current = null;
-          }
-
-          try {
-            const finalStatus = await getProviderChargeStatus(
-              session.token,
-              transactionId,
-            );
-            if (!mounted) return;
-
-            setResult((curr) => ({
-              ...curr,
-              ...finalStatus,
-              supportsStatusPolling: false,
-            }));
-
-            if (
-              finalStatus.status === "approved" ||
-              timeData.status === "autorizado"
-            ) {
-              setShowSuccessMessage(true);
-              scheduleClearForm();
-            } else {
-              const rejectedReason = (finalStatus as any).rejected_reason || "";
-              if (rejectedReason === "Rechazado por cliente") {
-                setError("El pago fue rechazado por el cliente.");
-              } else {
-                setError("Tiempo de espera agotado. El pago fue rechazado.");
-              }
-              scheduleClearForm();
-            }
-          } catch (e) {
-            if (mounted) {
-              setResult((curr) =>
-                curr?.status === "pending"
-                  ? { ...curr, status: "rejected" }
-                  : curr,
-              );
-              setError("Tiempo de espera agotado. El pago fue rechazado.");
-            }
-          }
-
-          if (statusMessageTimeoutRef.current) {
-            clearTimeout(statusMessageTimeoutRef.current);
-          }
-          statusMessageTimeoutRef.current = setTimeout(() => {
-            setShowSuccessMessage(false);
-            setError("");
-            scheduleClearForm();
-          }, AUTO_CLEAR_DELAY_MS) as unknown as number;
-
-          if (clearTimeoutRef.current) {
-            clearTimeout(clearTimeoutRef.current);
-          }
+        if (finalStatus.status === "pending") {
+          return;
         }
-      } catch (err) {
-        console.warn("Error leyendo reloj del backend", err);
+
+        if (statusPollIntervalRef.current) {
+          clearInterval(statusPollIntervalRef.current);
+          statusPollIntervalRef.current = null;
+        }
+
+        setResult((curr) => ({
+          ...curr,
+          ...finalStatus,
+          supportsStatusPolling: false,
+        }));
+
+        if (finalStatus.status === "approved") {
+          setShowSuccessMessage(true);
+          scheduleClearForm();
+        } else {
+          setError("El pago fue rechazado por el cliente.");
+          scheduleClearForm();
+        }
+
+        if (statusMessageTimeoutRef.current) {
+          clearTimeout(statusMessageTimeoutRef.current);
+        }
+        statusMessageTimeoutRef.current = setTimeout(() => {
+          setShowSuccessMessage(false);
+          setError("");
+          scheduleClearForm();
+        }, AUTO_CLEAR_DELAY_MS) as unknown as number;
+
+        if (clearTimeoutRef.current) {
+          clearTimeout(clearTimeoutRef.current);
+        }
+      } catch (error) {
+        console.warn("Error consultando estado del pago", error);
       }
     };
 
-    syncBackendTimer();
-    timeoutIntervalRef.current = setInterval(
-      syncBackendTimer,
-      1000,
+    syncPaymentStatus();
+    statusPollIntervalRef.current = setInterval(
+      syncPaymentStatus,
+      PAYMENT_STATUS_POLL_MS,
     ) as unknown as number;
 
     return () => {
       mounted = false;
-      if (timeoutIntervalRef.current) {
-        clearInterval(timeoutIntervalRef.current);
-        timeoutIntervalRef.current = null;
+      if (statusPollIntervalRef.current) {
+        clearInterval(statusPollIntervalRef.current);
+        statusPollIntervalRef.current = null;
       }
-      setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
     };
   }, [result, session, scheduleClearForm]);
 
@@ -411,18 +293,10 @@ export default function ProveedorScreen() {
     [subtotal, tipPercentage],
   );
   const total = subtotal + tipAmount;
-  const todayTotal = useMemo(
-    () => todayCharges.reduce((sum, item) => sum + item.total, 0),
-    [todayCharges],
-  );
-  const selectedEstablecimiento = establecimientos.find(
-    (item) => Number(item.id_establecimiento) === selectedEstablecimientoId,
-  );
   const canCharge =
     Boolean(session) &&
     Boolean(parsedClient?.id_usuario) &&
     subtotal > 0 &&
-    selectedEstablecimientoId > 0 &&
     !submitting &&
     (paymentMethod === "app" || /^\d{4}$/.test(nip.trim()));
   const isPaymentApproved = result?.status === "approved";
@@ -455,7 +329,6 @@ export default function ProveedorScreen() {
     setSubmitting(true);
     setError("");
     setResult(null);
-    setRemainingSeconds(PAYMENT_TIMEOUT_SECONDS);
     setShowSuccessMessage(false);
 
     try {
@@ -469,7 +342,7 @@ export default function ProveedorScreen() {
         description: description.trim() || "Consumo en establecimiento",
         paymentMethod,
         nip: paymentMethod === "nip" ? nip.trim() : undefined,
-        idEstablecimiento: selectedEstablecimientoId,
+        idEstablecimiento: session.user.id_establecimiento || undefined,
       });
       setResult(chargeResult);
 
@@ -493,14 +366,6 @@ export default function ProveedorScreen() {
         }, STATUS_CLEAR_DELAY_MS) as unknown as number;
       }
 
-      const providerRef = session.user.no_proveedor || session.user.id_usuario;
-      getProviderTodayCharges(
-        session.token,
-        providerRef,
-        selectedEstablecimientoId || undefined,
-      )
-        .then(setTodayCharges)
-        .catch(() => {});
     } catch (chargeError) {
       setError(
         chargeError instanceof Error
@@ -576,10 +441,7 @@ export default function ProveedorScreen() {
               <Text style={styles.title}>
                 {session?.user.nombre || "Comercio"}
               </Text>
-              <Text style={styles.body}>
-                {selectedEstablecimiento?.dsc_establecimiento ||
-                  "Caja de cobro"}
-              </Text>
+              <Text style={styles.body}>Caja de cobro</Text>
             </View>
             <Pressable
               accessibilityLabel="Cerrar sesión"
@@ -618,51 +480,6 @@ export default function ProveedorScreen() {
                   Nuevo cobro
                 </Text>
               </Pressable>
-            </View>
-
-            <View style={styles.field}>
-              <Text style={styles.label}>Establecimiento</Text>
-              {establecimientosLoading ? (
-                <ActivityIndicator color="#CD1125" />
-              ) : null}
-              <View style={styles.establishmentList}>
-                {establecimientos.length > 0 ? (
-                  establecimientos.map((item) => {
-                    const selected =
-                      Number(item.id_establecimiento) ===
-                      selectedEstablecimientoId;
-
-                    return (
-                      <Pressable
-                        key={item.id_establecimiento}
-                        onPress={() =>
-                          setSelectedEstablecimientoId(
-                            Number(item.id_establecimiento),
-                          )
-                        }
-                        style={[
-                          styles.establishmentPill,
-                          selected && styles.establishmentPillActive,
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.establishmentPillText,
-                            selected && styles.establishmentPillTextActive,
-                          ]}
-                        >
-                          {item.dsc_establecimiento ||
-                            `#${item.id_establecimiento}`}
-                        </Text>
-                      </Pressable>
-                    );
-                  })
-                ) : (
-                  <Text style={styles.hintText}>
-                    Sin establecimientos asignados.
-                  </Text>
-                )}
-              </View>
             </View>
 
             <View style={styles.field}>
@@ -859,15 +676,6 @@ export default function ProveedorScreen() {
               <Text style={styles.successMessage}>
                 ¡Pago realizado con éxito!
               </Text>
-            ) : null}
-
-            {isPaymentPending ? (
-              <View style={styles.timeoutContainer}>
-                <Text style={styles.timeoutLabel}>
-                  Tiempo restante para aprobar
-                </Text>
-                <Text style={styles.timeoutValue}>{remainingSeconds}s</Text>
-              </View>
             ) : null}
 
             <Pressable
@@ -1136,31 +944,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 20,
   },
-  establishmentList: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  establishmentPill: {
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    minHeight: 38,
-    justifyContent: "center",
-    paddingHorizontal: 12,
-  },
-  establishmentPillActive: {
-    backgroundColor: "#CD1125",
-    borderColor: "#CD1125",
-  },
-  establishmentPillText: {
-    color: "#3b2619",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  establishmentPillTextActive: {
-    color: "#fff8e8",
-  },
   hintText: {
     color: "#6f5639",
     fontSize: 14,
@@ -1264,26 +1047,6 @@ const styles = StyleSheet.create({
     fontWeight: "900",
     textAlign: "center",
   },
-  timeoutContainer: {
-    alignItems: "center",
-    backgroundColor: "#f9efd9",
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 12,
-  },
-  timeoutLabel: {
-    color: "#3b2619",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  timeoutValue: {
-    color: "#CD1125",
-    fontSize: 22,
-    fontWeight: "900",
-  },
   primaryButton: {
     alignItems: "center",
     backgroundColor: "#CD1125",
@@ -1315,47 +1078,6 @@ const styles = StyleSheet.create({
   },
   primaryButtonText: {
     color: "#fff8e8",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  consumosHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-  },
-  todayTotal: {
-    color: "#CD1125",
-    fontSize: 22,
-    fontWeight: "900",
-  },
-  consumoItem: {
-    alignItems: "center",
-    backgroundColor: "#f9efd9",
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 12,
-    justifyContent: "space-between",
-    padding: 12,
-  },
-  consumoInfo: {
-    flex: 1,
-    gap: 4,
-  },
-  consumoTitle: {
-    color: "#24160f",
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  consumoMeta: {
-    color: "#6f5639",
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  consumoTotal: {
-    color: "#24160f",
     fontSize: 16,
     fontWeight: "900",
   },

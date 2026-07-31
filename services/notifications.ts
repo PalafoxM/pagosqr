@@ -157,14 +157,3 @@ export async function rejectPaymentRequest(
   });
 }
 
-export async function getTransactionTime(
-  token: string,
-  transactionId: string | number,
-) {
-  return Promise.resolve({
-    status: "pending",
-    remaining_seconds: 60,
-    expires_at: new Date(Date.now() + 60000).toISOString(),
-    created_at: new Date().toISOString(),
-  });
-}

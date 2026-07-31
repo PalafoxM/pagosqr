@@ -1,6 +1,7 @@
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as ImageManipulator from "expo-image-manipulator";
 import { router, Stack } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -42,7 +43,6 @@ import {
 } from "@/services/client-data";
 import {
   approvePaymentRequest,
-  getTransactionTime,
   observeBalanceUpdates,
   observePaymentRequests,
   PaymentRequestNotification,
@@ -60,8 +60,8 @@ type ActivationStep =
   | "signature"
   | "summary";
 
-const PAYMENT_TIMEOUT_SECONDS = 60;
 const STATUS_MESSAGE_CLEAR_DELAY_MS = 3000;
+const ACTIVATION_SUBMITTED_KEY_PREFIX = "pagosfic.activationSubmitted.";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const SCREEN_HEIGHT = Dimensions.get("window").height;
@@ -93,6 +93,19 @@ const normalizeSearchText = (value: unknown) =>
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .trim();
+
+const getActivationSubmittedKey = (userId: number) =>
+  `${ACTIVATION_SUBMITTED_KEY_PREFIX}${userId}`;
+
+const areActivationDocumentsEmpty = (profile: ClienteProfile | null) => {
+  if (!profile) {
+    return false;
+  }
+
+  return [profile.ine_frontal, profile.ine_trasera, profile.firma].every(
+    (value) => String(value || "").trim() === "",
+  );
+};
 
 const mergeSessionWithProfile = (
   currentSession: AuthSession,
@@ -210,9 +223,6 @@ export default function ClienteScreen() {
     "approve" | "reject" | null
   >(null);
   const [paymentActionMessage, setPaymentActionMessage] = useState("");
-  const [paymentTimeoutSeconds, setPaymentTimeoutSeconds] = useState(
-    PAYMENT_TIMEOUT_SECONDS,
-  );
   const [activationStep, setActivationStep] = useState<ActivationStep>("idle");
   const [ineFront, setIneFront] = useState<string | null>(null);
   const [ineBack, setIneBack] = useState<string | null>(null);
@@ -224,6 +234,7 @@ export default function ClienteScreen() {
   const [cameraMountReady, setCameraMountReady] = useState(false);
   const [hasSignatureStrokes, setHasSignatureStrokes] = useState(false);
   const [activationLoading, setActivationLoading] = useState(false);
+  const [activationSubmitted, setActivationSubmitted] = useState(false);
   const [activationMessage, setActivationMessage] = useState("");
   const [activationError, setActivationError] = useState("");
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -238,6 +249,7 @@ export default function ClienteScreen() {
   >([]);
   const [dailyConsumptionLoading, setDailyConsumptionLoading] = useState(false);
   const [dailyConsumptionError, setDailyConsumptionError] = useState("");
+  const [dailyConsumptionSearch, setDailyConsumptionSearch] = useState("");
   const [dailyConsumptionRefreshTrigger, setDailyConsumptionRefreshTrigger] =
     useState(0);
   const cameraRef = useRef<any>(null);
@@ -248,7 +260,6 @@ export default function ClienteScreen() {
   const sessionRef = useRef<AuthSession | null>(null);
   const profileRef = useRef<ClienteProfile | null>(null);
   const paymentRequestRef = useRef<PaymentRequestNotification | null>(null);
-  const paymentTimeoutRef = useRef<number | null>(null);
   const profileRequestIdRef = useRef(0);
   const profileRefreshInFlightRef = useRef(false);
   const registeredPushTokenForSessionRef = useRef("");
@@ -283,6 +294,36 @@ export default function ClienteScreen() {
   useEffect(() => {
     const activeSession = sessionRef.current;
 
+    if (!activeSession || !profile) {
+      return;
+    }
+
+    const profileQrActivo = Number(profile.activo_qr || 0) === 1;
+
+    if (profileQrActivo) {
+      return;
+    }
+
+    if (areActivationDocumentsEmpty(profile)) {
+      setActivationSubmitted(false);
+      setActivationMessage("");
+      setActivationError("");
+      SecureStore.deleteItemAsync(
+        getActivationSubmittedKey(activeSession.user.id_usuario),
+      ).catch(() => {});
+      return;
+    }
+
+    setActivationSubmitted(true);
+    SecureStore.setItemAsync(
+      getActivationSubmittedKey(activeSession.user.id_usuario),
+      "1",
+    ).catch(() => {});
+  }, [profile]);
+
+  useEffect(() => {
+    const activeSession = sessionRef.current;
+
     if (
       !activeSession ||
       registeredPushTokenForSessionRef.current === sessionToken
@@ -302,85 +343,6 @@ export default function ClienteScreen() {
   useEffect(() => {
     paymentRequestRef.current = paymentRequest;
   }, [paymentRequest]);
-
-  useEffect(() => {
-    if (
-      !paymentRequest ||
-      paymentRequest.status === "approved" ||
-      paymentRequest.status === "rejected"
-    ) {
-      if (paymentTimeoutRef.current) {
-        clearInterval(paymentTimeoutRef.current);
-        paymentTimeoutRef.current = null;
-      }
-      setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
-      return;
-    }
-
-    if (paymentActionLoading !== null) {
-      return;
-    }
-
-    let mounted = true;
-
-    const syncBackendTime = async () => {
-      if (!sessionRef.current || !paymentRequest.transactionId) return;
-      try {
-        const timeData = await getTransactionTime(
-          sessionRef.current.token,
-          paymentRequest.transactionId,
-        );
-        if (!mounted) return;
-
-        setPaymentTimeoutSeconds(timeData.remaining_seconds);
-
-        if (timeData.remaining_seconds <= 0 || timeData.status !== "pending") {
-          if (paymentTimeoutRef.current) {
-            clearInterval(paymentTimeoutRef.current);
-            paymentTimeoutRef.current = null;
-          }
-
-          setPaymentRequest(null);
-          isProcessingPaymentRef.current = false;
-
-          if (
-            timeData.status === "rejected" ||
-            timeData.status === "rechazado" ||
-            timeData.remaining_seconds <= 0
-          ) {
-            setPaymentActionMessage(
-              "Tiempo de espera agotado. El pago ha sido rechazado.",
-            );
-          } else {
-            setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
-          }
-
-          if (statusMessageTimeoutRef.current)
-            clearTimeout(statusMessageTimeoutRef.current);
-          statusMessageTimeoutRef.current = setTimeout(() => {
-            setPaymentActionMessage("");
-          }, STATUS_MESSAGE_CLEAR_DELAY_MS) as unknown as number;
-        }
-      } catch (error) {
-        console.warn("Error sincronizando temporizador con backend", error);
-      }
-    };
-
-    syncBackendTime();
-    paymentTimeoutRef.current = setInterval(
-      syncBackendTime,
-      1000,
-    ) as unknown as number;
-
-    return () => {
-      mounted = false;
-      if (paymentTimeoutRef.current) {
-        clearInterval(paymentTimeoutRef.current);
-        paymentTimeoutRef.current = null;
-      }
-      setPaymentTimeoutSeconds(PAYMENT_TIMEOUT_SECONDS);
-    };
-  }, [paymentRequest, paymentActionLoading]);
 
   useEffect(() => {
     if (!sessionToken) {
@@ -454,7 +416,7 @@ export default function ClienteScreen() {
   useEffect(() => {
     let mounted = true;
 
-    getStoredSession().then((storedSession) => {
+    getStoredSession().then(async (storedSession) => {
       if (!mounted) {
         return;
       }
@@ -471,6 +433,12 @@ export default function ClienteScreen() {
       });
 
       setSession(storedSession);
+      const storedActivationSubmitted = await SecureStore.getItemAsync(
+        getActivationSubmittedKey(storedSession.user.id_usuario),
+      );
+      if (mounted) {
+        setActivationSubmitted(storedActivationSubmitted === "1");
+      }
       setProfile({
         ...getFallbackClienteProfile(storedSession),
         monto_deposito: "",
@@ -586,7 +554,6 @@ export default function ClienteScreen() {
     setSignatureImage(null);
     setHasSignatureStrokes(false);
     setActivationError("");
-    setActivationMessage("");
     setCameraLayout({ width: 0, height: 0 });
     setCameraKey((prev) => prev + 1);
     setSignatureKey((prev) => prev + 1);
@@ -622,6 +589,14 @@ export default function ClienteScreen() {
       return;
     }
 
+    if (activationSubmitted) {
+      setActivationMessage(
+        "Documentación enviada. Tu activación QR está en revisión.",
+      );
+      setActivationError("");
+      return;
+    }
+
     setActivationMessage("");
     setActivationError("");
 
@@ -650,7 +625,7 @@ export default function ClienteScreen() {
     setSignatureKey((prev) => prev + 1);
     setActivationStep("front");
     setActivationModalVisible(true);
-  }, [cameraPermission?.granted, requestCameraPermission]);
+  }, [activationSubmitted, cameraPermission?.granted, requestCameraPermission]);
 
   const cropToCardFrame = useCallback(
     async (uri: string, photoWidth: number, photoHeight: number) => {
@@ -855,10 +830,15 @@ export default function ClienteScreen() {
           ine_trasera: ineBack,
           firma: signature,
         });
+        await SecureStore.setItemAsync(
+          getActivationSubmittedKey(activeSession.user.id_usuario),
+          "1",
+        );
+        setActivationSubmitted(true);
+        closeActivationModal();
         setActivationMessage(
           "Documentos guardados correctamente. Tu activación QR quedó en revisión.",
         );
-        closeActivationModal();
       } catch (activationSaveError) {
         setActivationError(
           activationSaveError instanceof Error
@@ -873,6 +853,13 @@ export default function ClienteScreen() {
   );
 
   const handleSubmitActivation = useCallback(() => {
+    if (activationSubmitted) {
+      setActivationError(
+        "La documentación ya fue enviada y está en revisión.",
+      );
+      return;
+    }
+
     if (!ineFront || !ineBack || !signatureImage) {
       setActivationError("Captura frente, reverso y firma para activar el QR.");
       return;
@@ -881,7 +868,13 @@ export default function ClienteScreen() {
     setActivationLoading(true);
     setActivationError("");
     void saveActivationWithSignature(signatureImage);
-  }, [ineBack, ineFront, signatureImage, saveActivationWithSignature]);
+  }, [
+    activationSubmitted,
+    ineBack,
+    ineFront,
+    signatureImage,
+    saveActivationWithSignature,
+  ]);
 
   const handleLogout = useCallback(async () => {
     await clearSession();
@@ -1016,13 +1009,7 @@ export default function ClienteScreen() {
       const activeSession = sessionRef.current;
       if (!activeSession || !request?.transactionId) return;
 
-      if (paymentTimeoutRef.current) {
-        clearInterval(paymentTimeoutRef.current);
-        paymentTimeoutRef.current = null;
-      }
-
       const transactionKey = String(request.transactionId);
-      processedPaymentIdsRef.current.add(transactionKey);
 
       setPaymentActionLoading(action);
       setPaymentActionMessage("");
@@ -1039,6 +1026,7 @@ export default function ClienteScreen() {
           );
 
           setPaymentActionMessage("Pago aprobado correctamente.");
+          processedPaymentIdsRef.current.add(transactionKey);
 
           if (statusMessageTimeoutRef.current) {
             clearTimeout(statusMessageTimeoutRef.current);
@@ -1062,6 +1050,7 @@ export default function ClienteScreen() {
             request.transactionId,
           );
           setPaymentActionMessage("Pago rechazado correctamente.");
+          processedPaymentIdsRef.current.add(transactionKey);
           if (statusMessageTimeoutRef.current) {
             clearTimeout(statusMessageTimeoutRef.current);
           }
@@ -1078,24 +1067,6 @@ export default function ClienteScreen() {
             ? paymentError.message
             : String(paymentError);
         const lowerMsg = errorMessage.toLowerCase();
-
-        if (
-          lowerMsg.includes("la solicitud ha expirado") ||
-          lowerMsg.includes("tiempo de espera agotado")
-        ) {
-          setPaymentActionMessage(
-            "Tiempo de espera agotado. El pago ha sido rechazado.",
-          );
-          if (statusMessageTimeoutRef.current)
-            clearTimeout(statusMessageTimeoutRef.current);
-          statusMessageTimeoutRef.current = setTimeout(
-            () => setPaymentActionMessage(""),
-            STATUS_MESSAGE_CLEAR_DELAY_MS,
-          ) as unknown as number;
-          setPaymentRequest(null);
-          isProcessingPaymentRef.current = false;
-          return;
-        }
 
         if (isPaymentAlreadyResolvedError(paymentError)) {
           setPaymentRequest(null);
@@ -1130,7 +1101,7 @@ export default function ClienteScreen() {
   );
 
   useEffect(() => {
-    const unsubscribe = observePaymentRequests((nextPaymentRequest, source) => {
+    const unsubscribe = observePaymentRequests((nextPaymentRequest) => {
       const transactionKey = String(nextPaymentRequest.transactionId || "");
 
       if (!transactionKey) return;
@@ -1158,37 +1129,13 @@ export default function ClienteScreen() {
         return;
       }
 
-      const currentSession = sessionRef.current;
-      if (!currentSession) return;
-
-      getTransactionTime(currentSession.token, transactionKey)
-        .then((timeData) => {
-          if (timeData.status === "pending") {
-            isProcessingPaymentRef.current = true;
-            setPaymentRequest(nextPaymentRequest);
-            setPaymentActionMessage("");
-            setActiveTab("datos");
-          } else {
-            setPaymentRequest(null);
-            setPaymentActionMessage("Esta solicitud de pago ya fue atendida.");
-            if (statusMessageTimeoutRef.current)
-              clearTimeout(statusMessageTimeoutRef.current);
-            statusMessageTimeoutRef.current = setTimeout(
-              () => setPaymentActionMessage(""),
-              3000,
-            ) as unknown as number;
-          }
-        })
-        .catch((error) => {
-          console.warn(
-            "[cliente] error al consultar estado de transacción",
-            error,
-          );
-          isProcessingPaymentRef.current = true;
-          setPaymentRequest(nextPaymentRequest);
-          setPaymentActionMessage("");
-          setActiveTab("datos");
-        });
+      isProcessingPaymentRef.current = true;
+      setPaymentRequest({
+        ...nextPaymentRequest,
+        status: "pending",
+      });
+      setPaymentActionMessage("");
+      setActiveTab("datos");
     });
 
     return unsubscribe;
@@ -1234,9 +1181,29 @@ export default function ClienteScreen() {
     );
   }, [establecimientos, establecimientosSearch]);
 
+  const filteredDailyConsumption = useMemo(() => {
+    const searchTerm = normalizeSearchText(dailyConsumptionSearch);
+
+    if (!searchTerm) {
+      return dailyConsumption;
+    }
+
+    return dailyConsumption.filter((item) =>
+      [
+        item.id_pago,
+        item.id_solicitud_pago,
+        item.id_establecimiento,
+        item.establecimiento,
+        item.monto,
+        item.propina,
+        item.total,
+        item.fec_reg,
+      ].some((value) => normalizeSearchText(value).includes(searchTerm)),
+    );
+  }, [dailyConsumption, dailyConsumptionSearch]);
+
   const qrActivo =
     Number(profile?.activo_qr ?? session?.user.activo_qr ?? 0) === 1;
-  const activationSubmitted = Boolean(activationMessage);
   const refreshDisabled = manualRefreshing || profileLoading;
 
   const handleRefreshScreen = useCallback(async () => {
@@ -1261,6 +1228,23 @@ export default function ClienteScreen() {
       setManualRefreshing(false);
     }
   }, [refreshDisabled, refreshClienteProfile]);
+
+  const formatConsumptionDate = (value: string) => {
+    if (!value) return "";
+
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    return parsed.toLocaleString("es-MX", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   const renderActivationModal = () => {
     if (!activationModalVisible) {
@@ -1720,12 +1704,12 @@ export default function ClienteScreen() {
             <Text style={styles.modalSecondaryButtonText}>Volver</Text>
           </Pressable>
           <Pressable
-            disabled={activationLoading || !signatureImage}
+            disabled={activationLoading || activationSubmitted || !signatureImage}
             onPress={handleSubmitActivation}
             style={[
               styles.modalPrimaryButton,
               styles.modalSaveButton,
-              (activationLoading || !signatureImage) &&
+              (activationLoading || activationSubmitted || !signatureImage) &&
                 styles.modalButtonDisabled,
             ]}
           >
@@ -1893,16 +1877,6 @@ export default function ClienteScreen() {
                   )}
                 </Pressable>
               </View>
-              {paymentRequest && paymentRequest.status === "pending" ? (
-                <View style={styles.timeoutContainer}>
-                  <Text style={styles.timeoutLabel}>
-                    Tiempo restante para aprobar
-                  </Text>
-                  <Text style={styles.timeoutValue}>
-                    {paymentTimeoutSeconds}s
-                  </Text>
-                </View>
-              ) : null}
             </View>
           ) : null}
 
@@ -1914,12 +1888,18 @@ export default function ClienteScreen() {
             <View style={styles.panel}>
               <View style={styles.balanceGrid}>
                 <View style={styles.balancePanel}>
-                  <Text style={styles.balanceLabel}>Saldo disponible</Text>
-                  <Text style={styles.balanceValue}>
-                    {displayedBalance === null
-                      ? "Consultando..."
-                      : `$${formatBalance(displayedBalance)}`}
-                  </Text>
+                  {qrActivo ? (
+                    <>
+                      <Text style={styles.balanceLabel}>Saldo disponible</Text>
+                      <Text style={styles.balanceValue}>
+                        {displayedBalance === null
+                          ? "Consultando..."
+                          : `$${formatBalance(displayedBalance)}`}
+                      </Text>
+                    </>
+                  ) : (
+                    <Text style={styles.qrInactiveText}>QR Inactivo</Text>
+                  )}
                 </View>
               </View>
 
@@ -1948,7 +1928,23 @@ export default function ClienteScreen() {
               />
 
               <View style={styles.consumoSection}>
-                <Text style={styles.consumoSectionTitle}>Consumo diario</Text>
+                <View style={styles.consumoHeader}>
+                  <Text style={styles.consumoSectionTitle}>Consumo diario</Text>
+                  <Text style={styles.consumoCount}>
+                    {filteredDailyConsumption.length}
+                  </Text>
+                </View>
+                <TextInput
+                  accessibilityLabel="Buscar consumo diario"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  clearButtonMode="while-editing"
+                  onChangeText={setDailyConsumptionSearch}
+                  placeholder="Buscar consumo"
+                  placeholderTextColor="#9b876a"
+                  style={styles.searchInput}
+                  value={dailyConsumptionSearch}
+                />
                 {dailyConsumptionLoading ? (
                   <ActivityIndicator color="#0f766e" size="small" />
                 ) : dailyConsumptionError ? (
@@ -1957,15 +1953,40 @@ export default function ClienteScreen() {
                   <Text style={styles.emptyText}>
                     Sin consumo registrado hoy.
                   </Text>
+                ) : filteredDailyConsumption.length === 0 ? (
+                  <Text style={styles.emptyText}>
+                    No se encontraron consumos con esa búsqueda.
+                  </Text>
                 ) : (
-                  dailyConsumption.map((item, index) => (
-                    <View key={`consumo-${index}`} style={styles.consumoItem}>
-                      <Text style={styles.consumoItemName}>
-                        {item.establecimiento}
-                      </Text>
-                      <Text style={styles.consumoItemTotal}>
-                        ${item.total_gastado.toFixed(2)}
-                      </Text>
+                  filteredDailyConsumption.map((item) => (
+                    <View
+                      key={`consumo-${item.id_pago}`}
+                      style={styles.consumoItem}
+                    >
+                      <View style={styles.consumoItemInfo}>
+                        <Text style={styles.consumoItemName}>
+                          {item.establecimiento}
+                        </Text>
+                        <Text style={styles.consumoItemMeta}>
+                          Pago #{item.id_pago} · Est. {item.id_establecimiento}
+                        </Text>
+                        <Text style={styles.consumoItemMeta}>
+                          {formatConsumptionDate(item.fec_reg)}
+                        </Text>
+                      </View>
+                      <View style={styles.consumoAmounts}>
+                        <Text style={styles.consumoItemTotal}>
+                          ${item.total.toFixed(2)}
+                        </Text>
+                        <Text style={styles.consumoItemMeta}>
+                          Monto ${item.monto.toFixed(2)}
+                        </Text>
+                        {item.propina > 0 ? (
+                          <Text style={styles.consumoItemMeta}>
+                            Propina ${item.propina.toFixed(2)}
+                          </Text>
+                        ) : null}
+                      </View>
                     </View>
                   ))
                 )}
@@ -2082,7 +2103,7 @@ export default function ClienteScreen() {
                     {qrActivo
                       ? "QR activado"
                       : activationSubmitted
-                        ? "Activación enviada"
+                        ? "Enviado"
                         : "Activar QR"}
                   </Text>
                 </Pressable>
@@ -2351,6 +2372,14 @@ const styles = StyleSheet.create({
     fontSize: 38,
     fontWeight: "900",
     lineHeight: 44,
+  },
+  qrInactiveText: {
+    color: "#f97316",
+    fontSize: 24,
+    fontWeight: "900",
+    lineHeight: 32,
+    textAlign: "center",
+    textTransform: "uppercase",
   },
   balanceHint: {
     color: "#e7d7b5",
@@ -2775,27 +2804,6 @@ const styles = StyleSheet.create({
     borderRightWidth: 3,
     borderBottomRightRadius: 10,
   },
-  timeoutContainer: {
-    alignItems: "center",
-    backgroundColor: "#f9efd9",
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 12,
-    marginTop: 8,
-  },
-  timeoutLabel: {
-    color: "#3b2619",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  timeoutValue: {
-    color: "#CD1125",
-    fontSize: 22,
-    fontWeight: "900",
-  },
   consumoSection: {
     backgroundColor: "#f9efd9",
     borderColor: "#d5a84f",
@@ -2804,25 +2812,50 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 8,
   },
+  consumoHeader: {
+    alignItems: "center",
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
   consumoSectionTitle: {
     color: "#CD1125",
     fontSize: 14,
     fontWeight: "900",
     textTransform: "uppercase",
   },
+  consumoCount: {
+    color: "#24160f",
+    fontSize: 13,
+    fontWeight: "900",
+  },
   consumoItem: {
+    backgroundColor: "#fff8e8",
+    borderColor: "#e7d7b5",
+    borderRadius: 8,
+    borderWidth: 1,
     flexDirection: "row",
-    justifyContent: "space-between",
+    gap: 10,
     alignItems: "center",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#e7d7b5",
+    justifyContent: "space-between",
+    padding: 10,
+  },
+  consumoItemInfo: {
+    flex: 1,
+    gap: 3,
   },
   consumoItemName: {
     color: "#24160f",
     fontSize: 15,
-    fontWeight: "600",
-    flex: 1,
+    fontWeight: "800",
+  },
+  consumoItemMeta: {
+    color: "#6f5639",
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  consumoAmounts: {
+    alignItems: "flex-end",
+    minWidth: 94,
   },
   consumoItemTotal: {
     color: "#CD1125",

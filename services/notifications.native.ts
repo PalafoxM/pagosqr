@@ -665,14 +665,3 @@ export async function rejectPaymentRequest(
   });
 }
 
-export async function getTransactionTime(
-  token: string,
-  transactionId: string | number,
-) {
-  return getAuthenticated<{
-    status: string;
-    remaining_seconds: number;
-    expires_at: string | null;
-    created_at: string | null;
-  }>(`/transactions/${transactionId}/time`, token);
-}

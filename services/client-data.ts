@@ -17,6 +17,9 @@ export type ClienteProfile = {
   tiene_alimentos: number;
   tiene_hospedaje: number;
   activo_qr: number;
+  ine_frontal: string;
+  ine_trasera: string;
+  firma: string;
   qr: string;
 };
 
@@ -40,8 +43,15 @@ export type ActivateQrPayload = {
 };
 
 export type DailyConsumptionItem = {
+  id_pago: number;
+  id_usuario: number;
+  id_establecimiento: number;
+  id_solicitud_pago: number;
   establecimiento: string;
-  total_gastado: number;
+  monto: number;
+  propina: number;
+  total: number;
+  fec_reg: string;
 };
 
 const getApiBaseUrl = () => {
@@ -221,6 +231,9 @@ export const getFallbackClienteProfile = (
   tiene_alimentos: getFlag(session.user.tiene_alimentos, 1),
   tiene_hospedaje: getFlag(session.user.tiene_hospedaje, 0),
   activo_qr: getFlag(session.user.activo_qr, 0),
+  ine_frontal: "",
+  ine_trasera: "",
+  firma: "",
   qr: session.user.qr,
 });
 
@@ -320,6 +333,9 @@ export async function getClienteProfile(
     tiene_alimentos: tieneAlimentos,
     tiene_hospedaje: tieneHospedaje,
     activo_qr: activoQr,
+    ine_frontal: getString(row.ine_frontal),
+    ine_trasera: getString(row.ine_trasera || row.ine_trasero),
+    firma: getString(row.firma),
     qr: getString(row.qr) || getString(row.codigo_qr) || session.user.qr,
   };
 
@@ -331,6 +347,9 @@ export async function getClienteProfile(
     tiene_alimentos: profile.tiene_alimentos,
     tiene_hospedaje: profile.tiene_hospedaje,
     activo_qr: profile.activo_qr,
+    ine_frontal: Boolean(profile.ine_frontal),
+    ine_trasera: Boolean(profile.ine_trasera),
+    firma: Boolean(profile.firma),
   });
 
   return profile;
