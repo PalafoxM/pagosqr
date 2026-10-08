@@ -3,7 +3,9 @@ import * as SecureStore from "expo-secure-store";
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const SESSION_TOKEN_KEY = "pagosfic.session.token";
 const SESSION_USER_KEY = "pagosfic.session.user";
+const SESSION_NOTICE_KEY = "pagosfic.session.notice";
 const REMEMBERED_CREDENTIALS_KEY = "pagosfic.remembered.credentials";
+const SESSION_EXPIRED_MESSAGE = "Tu sesión expiró. Inicia sesión nuevamente.";
 
 export type AuthUser = {
   id_usuario: number;
@@ -56,6 +58,43 @@ const getNumber = (value: unknown) => {
 
 const getFlag = (value: unknown, fallback: number) =>
   value === null || value === undefined || value === "" ? fallback : getNumber(value);
+
+type TokenStatus = "valid" | "expired" | "invalid";
+
+const getTokenStatus = (token: string): TokenStatus => {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) {
+      return "invalid";
+    }
+
+    const normalizedPayload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const paddedPayload = normalizedPayload.padEnd(
+      normalizedPayload.length + ((4 - (normalizedPayload.length % 4)) % 4),
+      "=",
+    );
+    const payload = JSON.parse(atob(paddedPayload)) as { exp?: unknown };
+    const expiresAt = getNumber(payload.exp);
+
+    if (!expiresAt) {
+      return "invalid";
+    }
+
+    return Date.now() >= expiresAt * 1000 ? "expired" : "valid";
+  } catch {
+    return "invalid";
+  }
+};
+
+export class SessionExpiredError extends Error {
+  constructor(message = SESSION_EXPIRED_MESSAGE) {
+    super(message);
+    this.name = "SessionExpiredError";
+  }
+}
+
+export const isSessionExpiredError = (error: unknown) =>
+  error instanceof SessionExpiredError;
 
 const normalizeUser = (payload: unknown): AuthUser => {
   const row =
@@ -211,8 +250,11 @@ export async function saveSession(session: AuthSession) {
     qr: session.user.qr,
   };
 
-  await SecureStore.setItemAsync(SESSION_TOKEN_KEY, session.token);
-  await SecureStore.setItemAsync(SESSION_USER_KEY, JSON.stringify(user));
+  await Promise.all([
+    SecureStore.setItemAsync(SESSION_TOKEN_KEY, session.token),
+    SecureStore.setItemAsync(SESSION_USER_KEY, JSON.stringify(user)),
+    SecureStore.deleteItemAsync(SESSION_NOTICE_KEY),
+  ]);
 }
 
 export async function getStoredSession(): Promise<AuthSession | null> {
@@ -222,6 +264,12 @@ export async function getStoredSession(): Promise<AuthSession | null> {
   ]);
 
   if (!token || !userJson) {
+    return null;
+  }
+
+  const tokenStatus = getTokenStatus(token);
+  if (tokenStatus !== "valid") {
+    await expireSession();
     return null;
   }
 
@@ -290,6 +338,21 @@ export async function clearSession() {
     SecureStore.deleteItemAsync(SESSION_TOKEN_KEY),
     SecureStore.deleteItemAsync(SESSION_USER_KEY),
   ]);
+}
+
+export async function expireSession() {
+  await clearSession();
+  await SecureStore.setItemAsync(SESSION_NOTICE_KEY, SESSION_EXPIRED_MESSAGE);
+}
+
+export async function consumeSessionNotice() {
+  const notice = await SecureStore.getItemAsync(SESSION_NOTICE_KEY);
+
+  if (notice) {
+    await SecureStore.deleteItemAsync(SESSION_NOTICE_KEY);
+  }
+
+  return notice;
 }
 
 export function getHomePathForProfile(profileId: number, providerTypeId = 0) {

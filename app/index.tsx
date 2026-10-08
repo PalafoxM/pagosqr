@@ -19,6 +19,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import {
   clearRememberedCredentials,
   clearSession,
+  consumeSessionNotice,
   getHomePathForProfile,
   getRememberedCredentials,
   getStoredSession,
@@ -65,8 +66,12 @@ export default function LoginScreen() {
     });
 
     getStoredSession()
-      .then((session) => {
-        if (mounted && session) {
+      .then(async (session) => {
+        if (!mounted) {
+          return;
+        }
+
+        if (session) {
           const homePath = getHomePathForProfile(
             session.user.id_perfil,
             session.user.id_tipo_proveedor,
@@ -79,6 +84,11 @@ export default function LoginScreen() {
           }
 
           clearSession();
+        }
+
+        const notice = await consumeSessionNotice();
+        if (mounted && notice) {
+          setError(notice);
         }
       })
       .finally(() => {

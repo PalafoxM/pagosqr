@@ -1,15 +1,37 @@
+import { SessionExpiredError } from "@/services/auth";
+
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 
 type ApiResponse<T> = {
+  code?: string;
   error?: boolean;
   respuesta?: string;
   data?: T;
 };
 
 type ApiListResponse = {
+  code?: string;
   error?: boolean;
   respuesta?: string;
   data?: unknown[] | unknown;
+};
+
+const createApiError = (
+  response: Response,
+  result: ApiResponse<unknown> | ApiListResponse | null,
+  responseText: string,
+  fallback: string,
+) => {
+  const message = result?.respuesta || responseText || fallback;
+  const isAuthenticationError =
+    (response.status === 401 || response.status === 403) &&
+    (result?.code === "SESSION_EXPIRED" ||
+      result?.code === "SESSION_INVALID" ||
+      /token\s+(?:inv[aá]lido|expirado|requerido)/i.test(message));
+
+  return isAuthenticationError
+    ? new SessionExpiredError()
+    : new Error(message);
 };
 
 export type PaymentMethod = "app" | "nip";
@@ -64,6 +86,29 @@ export type ProviderTodayCharge = {
   total: number;
   status: string;
   created_at: string;
+};
+
+export type ProviderMovement = {
+  id_pago: number;
+  monto: number;
+  fec_reg: string;
+};
+
+export type ProviderMovementsPage = {
+  movements: ProviderMovement[];
+  totalAmount: number;
+  totalCount: number;
+  hasMore: boolean;
+};
+
+type ProviderMovementsResponse = ApiResponse<unknown[]> & {
+  summary?: {
+    total_monto?: unknown;
+    total_registros?: unknown;
+  };
+  pagination?: {
+    has_more?: boolean;
+  };
 };
 
 const getApiBaseUrl = () => {
@@ -155,7 +200,12 @@ export async function createProviderCharge(
   } catch {}
 
   if (!response.ok) {
-    throw new Error(result?.respuesta || responseText || `HTTP ${response.status}`);
+    throw createApiError(
+      response,
+      result,
+      responseText,
+      `HTTP ${response.status}`,
+    );
   }
 
   if (result?.error) {
@@ -189,7 +239,12 @@ export async function getProviderChargeStatus(
   } catch {}
 
   if (!response.ok) {
-    throw new Error(result?.respuesta || responseText || `HTTP ${response.status}`);
+    throw createApiError(
+      response,
+      result,
+      responseText,
+      `HTTP ${response.status}`,
+    );
   }
 
   if (result?.error) {
@@ -197,6 +252,70 @@ export async function getProviderChargeStatus(
   }
 
   return result?.data || {};
+}
+
+export async function getProviderMovements(
+  token: string,
+  idEstablecimiento: number,
+  limit = 50,
+  offset = 0,
+): Promise<ProviderMovementsPage> {
+  const params = new URLSearchParams({
+    idEstablecimiento: String(idEstablecimiento),
+    limit: String(limit),
+    offset: String(offset),
+  });
+  const response = await fetch(
+    `${getApiBaseUrl()}/transactions/provider/movements?${params}`,
+    {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+        "X-API-Token": token,
+      },
+    },
+  );
+
+  const responseText = await response.text();
+  let result: ProviderMovementsResponse | null = null;
+
+  try {
+    result = responseText
+      ? (JSON.parse(responseText) as ProviderMovementsResponse)
+      : null;
+  } catch {}
+
+  if (!response.ok) {
+    throw createApiError(
+      response,
+      result,
+      responseText,
+      `HTTP ${response.status}`,
+    );
+  }
+
+  if (result?.error) {
+    throw new Error(result.respuesta || "No se pudieron consultar movimientos.");
+  }
+
+  const movements = (Array.isArray(result?.data) ? result.data : []).map(
+    (payload): ProviderMovement => {
+      const row = normalizeRow(payload);
+      return {
+        id_pago: getNumber(row.id_pago),
+        monto: getNumber(row.monto),
+        fec_reg: getString(row.fec_reg),
+      };
+    },
+  );
+
+  return {
+    movements,
+    totalAmount: getNumber(result?.summary?.total_monto),
+    totalCount: getNumber(result?.summary?.total_registros),
+    hasMore: Boolean(result?.pagination?.has_more),
+  };
 }
 
 async function fetchProviderTodayEndpoint(

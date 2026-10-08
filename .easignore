@@ -1,0 +1,48 @@
+# Dependencias / caché
+node_modules/
+.expo/
+.git/
+
+# IDE / sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Builds anteriores
+*.aab
+*.apk
+*.ipa
+build/
+dist/
+web-build/
+coverage/
+
+# Capturas/documentación que no requiere la app
+app-store-screenshots/
+versiones/
+AGENTS.md
+CLAUDE.md
+README.md
+
+# Backend: no forma parte de la app móvil
+backFic/
+
+# Parches
+*.patch
+
+# Credenciales privadas del backend
+*-firebase-adminsdk-*.json
+
+# Archivos comprimidos
+*.zip
+*.rar
+*.7z
+*.tar
+*.gz

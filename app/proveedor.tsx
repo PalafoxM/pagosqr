@@ -15,10 +15,12 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import {
   AuthSession,
   clearSession,
+  expireSession,
   getStoredSession,
   isFoodProviderType,
   isHotelProfile,
   isProviderProfile,
+  isSessionExpiredError,
 } from "@/services/auth";
 import { registerPushToken } from "@/services/notifications";
 import {
@@ -28,7 +30,6 @@ import {
   PaymentMethod,
 } from "@/services/provider-data";
 
-const TIP_PERCENTAGES = [0, 5, 10, 15];
 const PAYMENT_STATUS_POLL_MS = 2000;
 const AUTO_CLEAR_DELAY_MS = 3000;
 const STATUS_CLEAR_DELAY_MS = 3000;
@@ -90,7 +91,6 @@ export default function ProveedorScreen() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [qrCode, setQrCode] = useState("");
   const [amount, setAmount] = useState("");
-  const [tipPercentage, setTipPercentage] = useState(0);
   const [description, setDescription] = useState("Consumo en establecimiento");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("app");
   const [nip, setNip] = useState("");
@@ -106,10 +106,14 @@ export default function ProveedorScreen() {
   const statusMessageTimeoutRef = useRef<number | null>(null);
   const parsedClient = useMemo(() => parseClientQrPayload(qrCode), [qrCode]);
 
+  const handleExpiredSession = useCallback(async () => {
+    await expireSession();
+    router.replace("/");
+  }, []);
+
   const clearForm = useCallback(() => {
     setQrCode("");
     setAmount("");
-    setTipPercentage(0);
     setDescription("Consumo en establecimiento");
     setPaymentMethod("app");
     setNip("");
@@ -268,6 +272,15 @@ export default function ProveedorScreen() {
           clearTimeout(clearTimeoutRef.current);
         }
       } catch (error) {
+        if (isSessionExpiredError(error)) {
+          if (statusPollIntervalRef.current) {
+            clearInterval(statusPollIntervalRef.current);
+            statusPollIntervalRef.current = null;
+          }
+          await handleExpiredSession();
+          return;
+        }
+
         console.warn("Error consultando estado del pago", error);
       }
     };
@@ -285,14 +298,10 @@ export default function ProveedorScreen() {
         statusPollIntervalRef.current = null;
       }
     };
-  }, [result, session, scheduleClearForm]);
+  }, [handleExpiredSession, result, session, scheduleClearForm]);
 
   const subtotal = useMemo(() => moneyFromText(amount), [amount]);
-  const tipAmount = useMemo(
-    () => Number(((subtotal * tipPercentage) / 100).toFixed(2)),
-    [subtotal, tipPercentage],
-  );
-  const total = subtotal + tipAmount;
+  const total = subtotal;
   const canCharge =
     Boolean(session) &&
     Boolean(parsedClient?.id_usuario) &&
@@ -338,7 +347,7 @@ export default function ProveedorScreen() {
         clientId: parsedClient?.id_usuario,
         id_usuario: parsedClient?.id_usuario,
         amount: subtotal,
-        tip: tipAmount,
+        tip: 0,
         description: description.trim() || "Consumo en establecimiento",
         paymentMethod,
         nip: paymentMethod === "nip" ? nip.trim() : undefined,
@@ -367,6 +376,11 @@ export default function ProveedorScreen() {
       }
 
     } catch (chargeError) {
+      if (isSessionExpiredError(chargeError)) {
+        await handleExpiredSession();
+        return;
+      }
+
       setError(
         chargeError instanceof Error
           ? chargeError.message
@@ -441,7 +455,18 @@ export default function ProveedorScreen() {
               <Text style={styles.title}>
                 {session?.user.nombre || "Comercio"}
               </Text>
-              <Text style={styles.body}>Caja de cobro</Text>
+              <Pressable
+                accessibilityLabel="Ver movimientos"
+                accessibilityRole="button"
+                onPress={() => router.push("/movimientos")}
+                style={({ pressed }) => [
+                  styles.headerMovementsButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <IconSymbol color="#CD1125" name="creditcard.fill" size={18} />
+                <Text style={styles.headerMovementsButtonText}>Movimientos</Text>
+              </Pressable>
             </View>
             <Pressable
               accessibilityLabel="Cerrar sesión"
@@ -511,9 +536,21 @@ export default function ProveedorScreen() {
                 </Pressable>
               </View>
               {parsedClient ? (
-                <Text style={styles.clientPreview}>
-                  {parsedClient.nombre_completo || "Cliente"}
-                </Text>
+                <View style={styles.clientConfirmation}>
+                  <IconSymbol
+                    color="#2e7d32"
+                    name="checkmark.seal.fill"
+                    size={18}
+                  />
+                  <View style={styles.clientConfirmationCopy}>
+                    <Text style={styles.clientPreview}>
+                      {parsedClient.nombre_completo || "Cliente"}
+                    </Text>
+                    <Text style={styles.clientConfirmationText}>
+                      Favor de ingresar el monto
+                    </Text>
+                  </View>
+                </View>
               ) : null}
             </View>
 
@@ -562,42 +599,6 @@ export default function ProveedorScreen() {
                   style={styles.input}
                   value={amount}
                 />
-              </View>
-            </View>
-
-            <View style={styles.field}>
-              <View style={styles.tipHeader}>
-                <Text style={styles.label}>Propina</Text>
-                <Text style={styles.tipAmountText}>
-                  ${tipAmount.toFixed(2)}
-                </Text>
-              </View>
-              <View style={styles.tipPercentageList}>
-                {TIP_PERCENTAGES.map((percentage) => {
-                  const selected = tipPercentage === percentage;
-
-                  return (
-                    <Pressable
-                      accessibilityRole="button"
-                      key={percentage}
-                      onPress={() => setTipPercentage(percentage)}
-                      style={({ pressed }) => [
-                        styles.tipPercentageButton,
-                        selected && styles.tipPercentageButtonActive,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.tipPercentageText,
-                          selected && styles.tipPercentageTextActive,
-                        ]}
-                      >
-                        {percentage}%
-                      </Text>
-                    </Pressable>
-                  );
-                })}
               </View>
             </View>
 
@@ -807,6 +808,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 21,
   },
+  headerMovementsButton: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    borderColor: "#CD1125",
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 7,
+    marginTop: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  headerMovementsButtonText: {
+    color: "#CD1125",
+    fontSize: 14,
+    fontWeight: "900",
+  },
   iconButton: {
     alignItems: "center",
     backgroundColor: "#CD1125",
@@ -831,6 +849,8 @@ const styles = StyleSheet.create({
   panelHeader: {
     alignItems: "center",
     flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
   },
   newChargeButton: {
     alignItems: "center",
@@ -944,6 +964,22 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     lineHeight: 20,
   },
+  clientConfirmation: {
+    alignItems: "flex-start",
+    flexDirection: "row",
+    gap: 8,
+    paddingTop: 2,
+  },
+  clientConfirmationCopy: {
+    flex: 1,
+    gap: 1,
+  },
+  clientConfirmationText: {
+    color: "#2e7d32",
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 18,
+  },
   hintText: {
     color: "#6f5639",
     fontSize: 14,
@@ -955,42 +991,6 @@ const styles = StyleSheet.create({
   },
   moneyField: {
     flex: 1,
-  },
-  tipHeader: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  tipAmountText: {
-    color: "#3b2619",
-    fontSize: 16,
-    fontWeight: "900",
-  },
-  tipPercentageList: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  tipPercentageButton: {
-    alignItems: "center",
-    backgroundColor: "#f9efd9",
-    borderColor: "#d5a84f",
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    justifyContent: "center",
-    minHeight: 44,
-  },
-  tipPercentageButtonActive: {
-    backgroundColor: "#CD1125",
-    borderColor: "#CD1125",
-  },
-  tipPercentageText: {
-    color: "#3b2619",
-    fontSize: 14,
-    fontWeight: "900",
-  },
-  tipPercentageTextActive: {
-    color: "#fff8e8",
   },
   segmented: {
     backgroundColor: "#e7d7b5",
